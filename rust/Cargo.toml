@@ -1,0 +1,2 @@
+[workspace]
+members = ["dag_core", "bench_worker", "store", "crypto", "worker", "consensus"]
