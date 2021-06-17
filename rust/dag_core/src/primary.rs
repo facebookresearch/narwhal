@@ -1,34 +1,33 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::committee::*;
 use super::error::*;
 use super::messages::*;
 use super::processor::*;
+use super::store::Store;
 use super::types::Metadata;
 use super::types::*;
+use crate::consensus::Consensus;
 use crate::primary_net::PrimaryNetSender;
 use crate::sync_driver::SyncDriver;
-use crate::sync_server::*;
 use crate::synchronizer::*;
-use crypto::{Digest, Signature};
-use ed25519_dalek::Digest as _;
-use ed25519_dalek::Sha512;
 use futures::future::FutureExt;
 use futures::select;
+use futures::stream::StreamExt;
 use log::*;
 use std::collections::{BTreeSet, HashMap};
+use std::convert::TryInto;
 use std::time::{SystemTime, UNIX_EPOCH};
-use store::Store;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::interval;
-use tokio::time::Duration;
+use tokio::time::{delay_for, Duration};
+use tokio::time::{interval, Instant};
+// use rand::Rng;
 
 #[cfg(test)]
 #[path = "tests/primary_tests.rs"]
 pub mod primary_tests;
 
-const BLOCK_TIMER_RESOLUTION: u64 = 100; // ms
+const BLOCK_TIMER_RESOLUTION: u64 = 53; // 100; // ms
 
 pub struct PrimaryCore {
     /// The name of this node.
@@ -69,13 +68,10 @@ pub struct PrimaryCore {
     tx_missing: Sender<(Digest, PrimaryMessage)>,
     /// Receive commands from the sync driver so that they can be forwarded to the net.
     rx_sync_commands: Receiver<PrimaryMessage>,
-    /// Send to handle header sync
-    tx_header_sync: Sender<(RoundNumber, Digest, NodeID, NodeID)>,
 }
 
 impl PrimaryCore {
     /// Make a new core.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: NodeID,
         committee: Committee,
@@ -84,8 +80,6 @@ impl PrimaryCore {
         receiving_endpoint: Receiver<PrimaryMessage>,
         loopback_receiving_endpoint: Sender<PrimaryMessage>,
         store: Store,
-        tx_consensus_receiving: Sender<ConsensusMessage>,
-        rx_consensus_sending: Receiver<ConsensusMessage>,
     ) -> Self {
         let inner_genesis = Certificate::genesis(&committee);
 
@@ -95,7 +89,7 @@ impl PrimaryCore {
         // delays them, and then forwards them to the network.
         let (tx_missing, rx_missing) = channel(1000);
         let (tx_commands, rx_commands) = channel(1000);
-        SyncDriver::run(rx_missing, tx_commands, store.clone());
+        SyncDriver::run(rx_missing, tx_commands.clone(), store.clone());
 
         // Initialize the task that waits for all header dependencies.
         let (tx, rx) = mpsc::unbounded_channel();
@@ -103,6 +97,17 @@ impl PrimaryCore {
         tokio::spawn(async move {
             header_waiter_process(inner_store, inner_genesis, rx, loopback_receiving_endpoint)
                 .await;
+        });
+
+        let (tx_consensus_receiving, rx_consensus_receiving) = channel(1000);
+        let (tx_consensus_sending, rx_consensus_sending) = channel(1000);
+        let mut consensus = Consensus::new(
+            tx_consensus_sending,
+            rx_consensus_receiving,
+            committee.clone(),
+        );
+        tokio::spawn(async move {
+            consensus.start().await;
         });
 
         let (tx_synchronizer_to_network, rx_synchronizer_to_network) = channel(1000);
@@ -127,9 +132,6 @@ impl PrimaryCore {
             dag_synchronizer_process(rx_synchronizer_receiving, dag_synchronizer).await;
         });
 
-        let (tx_header_sync, rx_header_sync) = channel(1000);
-        run_sync_header_server(store.clone(), rx_header_sync, sending_endpoint.clone());
-
         Self {
             id,
             committee,
@@ -150,7 +152,6 @@ impl PrimaryCore {
             last_garbage_collected_round: 0,
             tx_missing,
             rx_sync_commands: rx_commands,
-            tx_header_sync,
         }
     }
 
@@ -166,19 +167,22 @@ impl PrimaryCore {
         // We store by primary ID
         if let Ok(primary_id) = self.committee.get_primary_for_worker(&worker_id) {
             if primary_id == self.id {
-                self.digests_to_include.insert((digest.clone(), shard_id));
+                self.digests_to_include.insert((digest, shard_id));
             }
         } else {
-            panic!("{:?} worker has no primary", worker_id);
+            panic!(format!("{:?} worker has no primary", worker_id));
         };
 
         // Make a record
-        let record = BlockPrimaryRecord::new(digest.clone(), worker_id, shard_id).to_bytes();
+        let record = BlockPrimaryRecord::new(digest, worker_id, shard_id).to_bytes();
 
         // Here we persist the digest to be able to wait on the store using 'notify_read'.
         self.store
-            .write(digest.to_vec(), record) //key and value are the same?
-            .await;
+            .write(digest.0.to_vec(), record) //key and value are the same?
+            .await
+            .map_err(|e| DagError::StorageFailure {
+                error: format!("{}", e),
+            })?;
 
         Ok(())
     }
@@ -229,7 +233,7 @@ impl PrimaryCore {
         };
         let signed_blockheader =
             SignedBlockHeader::new(blockheader.clone(), &mut self.signature_channel).await?;
-        let digest = signed_blockheader.digest.clone();
+        let digest = signed_blockheader.digest;
 
         // Record that we are collecting signatures on this blockheader.
         self.aggregator.init(blockheader, digest, round, self.id);
@@ -269,6 +273,19 @@ impl PrimaryCore {
             >= self.committee.quorum_threshold()
     }
 
+    pub fn check_parents_stored(&self, header: &BlockHeader) -> bool {
+        let digest: BTreeSet<(NodeID, Digest)> = self
+            .processor
+            .get_certificates(header.round - 1)
+            .cloned()
+            .unwrap_or_else(HashMap::new)
+            .iter()
+            .map(|(digest, cert)| (cert.primary_id, *digest))
+            .collect();
+
+        digest.is_superset(&header.parents)
+    }
+
     pub async fn write_header_to_store(
         &mut self,
         header: BlockHeader,
@@ -278,8 +295,13 @@ impl PrimaryCore {
             "Writing to store HeaderPrimaryRecord with digest: {:?}",
             digest
         );
-        let record = HeaderPrimaryRecord::new(header, digest.clone()).to_bytes();
-        self.store.write(digest.to_vec(), record).await;
+        let record = HeaderPrimaryRecord::new(header, digest).to_bytes();
+        self.store
+            .write(digest.0.to_vec(), record)
+            .await
+            .map_err(|e| DagError::StorageFailure {
+                error: format!("{}", e),
+            })?;
         Ok(())
     }
 
@@ -309,18 +331,14 @@ impl PrimaryCore {
                 .processor
                 .contains_header_by_digest_round(&header.digest, round)
         {
-            self.write_header_to_store(deserialized_header.clone(), header.digest.clone())
+            self.write_header_to_store(deserialized_header.clone(), header.digest)
                 .await?;
 
             // 5. Process the header. This "delivers" the header.
             self.processor
-                .add_header(deserialized_header, header.digest.clone());
+                .add_header(deserialized_header, header.digest);
 
-            debug!(
-                "Bare store Header {:?} Round {:?}",
-                header.digest.clone(),
-                round
-            );
+            debug!("Bare store Header {:?} Round {:?}", header.digest, round);
             return Ok(None);
         }
 
@@ -353,14 +371,14 @@ impl PrimaryCore {
 
                 let msg = PrimaryMessage::SyncTxSend(
                     SyncTxInfo {
-                        digest: digest.clone(),
+                        digest: *digest,
                         shard_id: *shard_id,
                     },
                     worker_id,
                 );
                 //self.send_message(msg).await?;
                 self.tx_missing
-                    .send((digest.clone(), msg))
+                    .send((*digest, msg))
                     .await
                     .expect("Failed to send message to sync driver");
                 debug!("Missing TXBlock {:?}", digest);
@@ -371,14 +389,14 @@ impl PrimaryCore {
         for (other_primary_id, digest) in &deserialized_header.parents {
             // This is the key with which we store a cert in storage
             let digest_in_store =
-                PartialCertificate::make_digest(&digest, round - 1, *other_primary_id);
+                PartialCertificate::make_digest(*digest, round - 1, *other_primary_id);
 
             if !self
                 .processor
                 .contains_certificate_by_digest_round(&digest, round - 1)
             {
-                let msg = PrimaryMessage::SyncHeaderRequest(digest.clone(), self.id, sender);
-
+                let msg = PrimaryMessage::SyncCertRequest((*digest, round - 1), self.id, sender);
+                //self.send_message(msg).await?;
                 self.tx_missing
                     .send((digest_in_store, msg))
                     .await
@@ -399,10 +417,7 @@ impl PrimaryCore {
         // 5. Check parents total stake - we should have all parents ids by now.
 
         if !self.check_parents_quorum(&deserialized_header) {
-            debug!(
-                "the digest of the WrongParents header: {:?}",
-                header.digest.clone()
-            );
+            debug!("the digest of the WrongParents header: {:?}", header.digest);
             // Insert the header, BUT keep the response to None.
             // As a result any subsequent attempts to send a header will result in no action.
             self.received_headers
@@ -443,7 +458,7 @@ impl PrimaryCore {
         header: SignedBlockHeader,
         deserialized_header: BlockHeader,
     ) -> Result<Option<PartialCertificate>, DagError> {
-        let digest = header.digest.clone();
+        let digest = header.digest;
         let sender = deserialized_header.author;
         let round = deserialized_header.round;
 
@@ -459,14 +474,14 @@ impl PrimaryCore {
         let partial_certificate = PartialCertificate::new(
             self.id,
             sender,
-            digest.clone(),
+            digest,
             round,
             self.signature_channel.clone(),
         )
         .await?;
 
         // 2. Store the blockheader.
-        self.write_header_to_store(deserialized_header.clone(), header.digest.clone())
+        self.write_header_to_store(deserialized_header.clone(), header.digest)
             .await?;
         // ! This is the point of no return: we cannot fail after that.
 
@@ -492,7 +507,7 @@ impl PrimaryCore {
 
         // Check the certificate.
         certificate.check(&self.committee)?;
-        let digest = certificate.digest.clone();
+        let digest = certificate.digest;
         let round = certificate.round;
         let header = certificate.header.clone();
         //TODO: No Longer important since we get certificates with headers
@@ -500,8 +515,13 @@ impl PrimaryCore {
         //Note: it is important to distinguish from header digest. Otherwise, we might think that we have all parents certificates when actually we have only the headers
         let bytes: Vec<u8> = bincode::serialize(&certificate)?;
         let digest_to_store =
-            PartialCertificate::make_digest(&digest, round, certificate.primary_id);
-        self.store.write(digest_to_store.0.to_vec(), bytes).await;
+            PartialCertificate::make_digest(digest, round, certificate.primary_id);
+        self.store
+            .write(digest_to_store.0.to_vec(), bytes)
+            .await
+            .map_err(|e| DagError::StorageFailure {
+                error: format!("{}", e),
+            })?;
 
         // Try to remove from batch_digests all digests that have been certified.
         // Note: in the case of our own headers we always have them. Therefore when our own header gets a
@@ -530,7 +550,7 @@ impl PrimaryCore {
 
         // Deliver the certificate.
         self.processor
-            .add_header(header.clone(), certificate.digest.clone());
+            .add_header(header.clone(), certificate.digest);
         self.write_header_to_store(header, digest).await?;
         self.processor.add_certificate(certificate);
 
@@ -573,29 +593,61 @@ impl PrimaryCore {
         Ok(None)
     }
 
+    /// Fetch a certificate to reply to sync requests.
+    fn handle_sync_certificate(&self, digest: Digest, round: RoundNumber) -> Option<Certificate> {
+        if let Some(data) = self.processor.get_certificates(round) {
+            if let Some(certificate) = data.get(&digest) {
+                return Some(certificate.clone());
+            }
+        }
+        None
+    }
+
     async fn handle_header_reply(
         &mut self,
         certificate: Certificate,
         header: BlockHeader,
     ) -> Result<(), DagError> {
-        let cert_digest = certificate.digest.clone();
+        let cert_digest = certificate.digest;
         self.handle_certificate(certificate).await?;
-
         //certification id valid
-        let data = bincode::serialize(&header)?;
-        let mut h: Sha512 = Sha512::new();
-        let mut hash: [u8; 64] = [0u8; 64];
-        let mut digest: [u8; 32] = [0u8; 32];
-        h.update(&data);
-        hash.copy_from_slice(h.finalize().as_slice());
-        digest.copy_from_slice(&hash[..32]);
-        let digest = Digest(digest);
-
+        let digest = bincode::serialize(&header)?.digest();
         if digest == cert_digest {
-            self.processor.add_header(header.clone(), digest.clone());
+            self.processor.add_header(header.clone(), digest);
             self.write_header_to_store(header, digest).await?;
         }
         Ok(())
+    }
+
+    async fn handle_header_request(
+        &mut self,
+        digest: Digest,
+    ) -> Result<Option<(Certificate, BlockHeader)>, DagError> {
+        if let Some(db_value) =
+            self.store
+                .read(digest.0.to_vec())
+                .await
+                .map_err(|e| DagError::StorageFailure {
+                    error: format!("{}", e),
+                })?
+        {
+            let record_header: HeaderPrimaryRecord = bincode::deserialize(&db_value[..])?;
+            let header = record_header.header;
+            let digest_cert_in_store =
+                PartialCertificate::make_digest(digest, header.round, header.author);
+            if let Some(db_value) = self
+                .store
+                .read(digest_cert_in_store.0.to_vec())
+                .await
+                .map_err(|e| DagError::StorageFailure {
+                    error: format!("{}", e),
+                })?
+            {
+                let certificate: Certificate = bincode::deserialize(&db_value[..])?;
+                return Ok(Some((certificate, header)));
+            }
+        }
+        Ok(None)
     }
 
     /// Try to move to a new round.
@@ -625,10 +677,8 @@ impl PrimaryCore {
                 // before we 'pull' them.
                 if self.round > 1 {
                     let data_prev_round = self.processor.get_certificates(round - 1).unwrap();
-                    let digests_prev_round: Vec<Digest> = data_prev_round
-                        .iter()
-                        .map(|(digest, _)| digest.clone())
-                        .collect();
+                    let digests_prev_round: Vec<Digest> =
+                        data_prev_round.iter().map(|(digest, _)| *digest).collect();
 
                     let msg = SyncMessage::SyncUpToRound(
                         self.round - 1,
@@ -662,6 +712,10 @@ impl PrimaryCore {
         }
 
         let mut last_sent_round = 0;
+        let mut last_sent_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
 
         let interval = interval(Duration::from_millis(BLOCK_TIMER_RESOLUTION));
         tokio::pin!(interval);
@@ -670,7 +724,7 @@ impl PrimaryCore {
             select! {
                 // We trigger progress in the Primary server when:
                 // 1. We receive a message from another peer primary.
-                msg = self.receiving_endpoint.recv().fuse() => {
+                msg = self.receiving_endpoint.next().fuse() => {
                     if let Some(msg) = msg {
                         if let Err(e) = self.handle_message(msg).await {
                             error!("{}", e);
@@ -680,7 +734,7 @@ impl PrimaryCore {
                 }
 
                 // 2. We have just sealed some more state into the consensus and are trigerring cleanups.
-                msg = self.get_from_consensus.recv().fuse() => {
+                msg = self.get_from_consensus.next().fuse() => {
                     if let Some(msg) = msg {
                         match msg {
                             ConsensusMessage::OrderedHeaders(committed_sequence, last_committed_round) => {
@@ -691,6 +745,7 @@ impl PrimaryCore {
                                     self.digests_to_include.extend(digests);
                                 }
                                 self.last_garbage_collected_round = last_committed_round-GC_DEPTH;
+
                             }
                         }
                             _ => {
@@ -712,7 +767,7 @@ impl PrimaryCore {
                             debug!("Sending for round {}", self.round);
                             let parents: BTreeSet<_> = data
                                 .iter()
-                                .map(|(digest, cert)| (cert.primary_id, digest.clone()))
+                                .map(|(digest, cert)| (cert.primary_id, *digest))
                                 .collect();
                             last_sent_round = self.round;
                             if let Err(e) = self.make_blockheader(parents, self.round).await {
@@ -723,7 +778,7 @@ impl PrimaryCore {
                 },
 
                 // Receive messages from the sync driver and forwards them to the network.
-                message = self.rx_sync_commands.recv().fuse() => {
+                message = self.rx_sync_commands.next().fuse() => {
                     if let Some(message) = message {
                         self.send_message(message).await.expect("Failed to forward sync request to the network");
                     }
@@ -774,14 +829,23 @@ impl PrimaryCore {
                 self.handle_certificate(certificate).await?;
                 Ok(())
             }
+            // Below are sync messages.
+            PrimaryMessage::SyncCertRequest((digest, round), requester, _) => {
+                //Send the certificate
+                let data = self.handle_sync_certificate(digest, round);
+                if let Some(certificate) = data {
+                    // Send back the certificate to he sender.
+                    self.send_message(PrimaryMessage::SyncCertReply(certificate, requester))
+                        .await?;
+                }
+                Ok(())
+            }
 
-            PrimaryMessage::SyncHeaderRequest(digest, requester, _x) => {
-                self.tx_header_sync
-                    .send((self.round, digest, requester, _x))
-                    .await
-                    .map_err(|e| DagError::ChannelError {
-                        error: format!("Sync sender channel error: {}", e),
-                    })?;
+            PrimaryMessage::SyncHeaderRequest(digest, requester, _) => {
+                if let Some(data) = self.handle_header_request(digest).await? {
+                    self.send_message(PrimaryMessage::SyncHeaderReply(data, requester))
+                        .await?;
+                }
                 Ok(())
             }
 

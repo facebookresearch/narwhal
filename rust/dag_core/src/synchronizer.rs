@@ -1,10 +1,10 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::committee::*;
 use super::error::*;
 use super::messages::*;
+use super::store::Store;
 use super::types::*;
+use crate::store::DBValue;
 use bincode::Error;
-use crypto::Digest;
 use futures::future::{Fuse, FutureExt};
 use futures::select;
 use futures::stream::futures_unordered::FuturesUnordered;
@@ -12,27 +12,24 @@ use futures::stream::StreamExt;
 use futures::{future::FusedFuture, pin_mut};
 use log::*;
 use rand::seq::SliceRandom;
-use std::cmp::max;
 use std::cmp::min;
-use std::collections::HashSet;
-use store::Store;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::{sleep, Duration};
+use tokio::time::{delay_for, Duration};
 
-type DBValue = Vec<u8>;
+use std::cmp::max;
 
 /// A service that keeps watching for the dependencies of blocks.
 pub async fn header_waiter_process(
     mut store: Store,          // A copy of the inner store
     genesis: Vec<Certificate>, // The genesis set of certs
     mut rx: mpsc::UnboundedReceiver<(SignedBlockHeader, BlockHeader)>, // A channel to receive Headers
-    loopback_commands: Sender<PrimaryMessage>,
+    mut loopback_commands: Sender<PrimaryMessage>,
 ) {
     // Register the genesis certs ...
     for cert in &genesis {
         // let bytes: Vec<u8> = bincode::serialize(&cert)?;
-        let digest_in_store = PartialCertificate::make_digest(&cert.digest, 0, cert.primary_id);
+        let digest_in_store = PartialCertificate::make_digest(cert.digest, 0, cert.primary_id);
         let _ = store
             .write(digest_in_store.0.to_vec(), digest_in_store.0.to_vec()) //digest_in_store.0.to_vec() --> bytes ?
             .await;
@@ -55,7 +52,7 @@ pub async fn header_waiter_process(
                     error!("Error in waiter.");
                 }
             }
-            msg = rx.recv().fuse() => {
+            msg = rx.next().fuse() => {
                 if let Some((signed_header, header)) = msg {
                     let i2_store = store.clone();
                     let fut = header_waiter(i2_store, signed_header, header);
@@ -86,7 +83,7 @@ pub async fn header_waiter(
     //Note: we now store different digests for header and certificates to avoid false positive.
     for (other_primary_id, digest) in &header.parents {
         let digest_in_store =
-            PartialCertificate::make_digest(&digest, header.round - 1, *other_primary_id);
+            PartialCertificate::make_digest(*digest, header.round - 1, *other_primary_id);
         if store.notify_read(digest_in_store.0.to_vec()).await.is_err() {
             return Err(DagError::StorageFailure {
                 error: "Error in reading store from 'header_waiter'.".to_string(),
@@ -122,7 +119,7 @@ pub async fn dag_synchronizer_process(
     pin_mut!(rollback_fut);
     loop {
         select! {
-            msg = get_from_dag.recv().fuse() => {
+            msg = get_from_dag.next().fuse() => {
                 if let Some(SyncMessage::SyncUpToRound(round, digests, last_gc_round)) = msg {
                     if round > round_to_sync {
                         debug!("DAG sync: received request to sync digests: {:?} up to round {}", digests, round);
@@ -171,30 +168,29 @@ pub async fn handle_header_digest(
 ) -> Result<Option<Vec<Digest>>, DagError> {
     //TODO: issue: should we try the processor first? we need concurrent access to it...
 
-    if let Ok(dbvalue) = dag_synchronizer.store.read(digest.to_vec()).await {
+    if let Ok(dbvalue) = dag_synchronizer.store.read(digest.0.to_vec()).await {
         match dbvalue {
             None => {
                 debug!("invoking send_sync_header_requests: {:?}", digest);
                 dag_synchronizer
-                    .send_sync_header_requests(digest.clone(), sq)
+                    .send_sync_header_requests(digest, sq)
                     .await?;
 
                 // Exponential backoff delay
                 let mut delay = 50;
                 loop {
                     select! {
-                        ret =  dag_synchronizer.store.notify_read(digest.to_vec()).fuse() =>{
+                        ret =  dag_synchronizer.store.notify_read(digest.0.to_vec()).fuse() =>{
                             if let Ok(record_header) = ret {
                                return Ok(dag_synchronizer.handle_record_header(record_header, rollback_stop_round).await?);
                             } else {
                                 //handle the error.
-                                error!("Read returned an error: {:?}", ret);
                             }
                         }
 
-                        _ = sleep(Duration::from_millis(delay)).fuse() => {
+                        _ = delay_for(Duration::from_millis(delay)).fuse() => {
                             debug!("Trigger Sync on {:?}", digest);
-                            dag_synchronizer.send_sync_header_requests(digest.clone(), sq).await?;
+                            dag_synchronizer.send_sync_header_requests(digest, sq).await?;
                             delay *= 4;
                         }
                     }
@@ -228,7 +224,6 @@ pub async fn rollback_headers(
     rollback_stop_round: RoundNumber,
     sq: SyncNumber,
 ) -> Result<(), DagError> {
-    let mut asked_for: HashSet<Digest> = HashSet::new();
     let mut digests_in_process = FuturesUnordered::new();
 
     for digest in digests {
@@ -244,23 +239,9 @@ pub async fn rollback_headers(
         };
         if let Some(parents_digests) = option {
             for digest in parents_digests {
-                // Only ask for each digest once per rollback.
-                if asked_for.contains(&digest) {
-                    continue;
-                }
-                asked_for.insert(digest.clone());
-
-                if !dag_synchronizer.pending_digests.contains(&digest) {
-                    debug!("Seems so {}", digest);
-                    dag_synchronizer.pending_digests.insert(digest.clone());
-                    let fut = handle_header_digest(
-                        dag_synchronizer.clone(),
-                        digest,
-                        rollback_stop_round,
-                        sq,
-                    );
-                    digests_in_process.push(fut);
-                }
+                let fut =
+                    handle_header_digest(dag_synchronizer.clone(), digest, rollback_stop_round, sq);
+                digests_in_process.push(fut);
             }
         }
     }
@@ -278,7 +259,6 @@ pub struct DagSynchronizer {
     pub send_to_network: Sender<(RoundNumber, PrimaryMessage)>,
     pub store: Store,
     pub committee: Committee,
-    pub pending_digests: HashSet<Digest>,
 }
 
 impl DagSynchronizer {
@@ -295,7 +275,6 @@ impl DagSynchronizer {
             send_to_network,
             store,
             committee,
-            pending_digests: HashSet::new(),
         }
     }
 
@@ -317,10 +296,7 @@ impl DagSynchronizer {
                 continue;
             }
 
-            let msg =
-                PrimaryMessage::SyncHeaderRequest(digest.clone(), self.id, source.primary.name);
-
-            // info!("Sync Request (Conse): {:?} from {:?}", digest.clone(), source.primary.name);
+            let msg = PrimaryMessage::SyncHeaderRequest(digest, self.id, source.primary.name);
 
             if let Err(e) = self.send_to_network.send((sq, msg)).await {
                 panic!("error: {}", e);
@@ -337,15 +313,9 @@ impl DagSynchronizer {
         // let mut record_header: HeaderPrimaryRecord = bincode::deserialize(&record_header[..])?;
         let mut record_header: HeaderPrimaryRecord = bincode::deserialize(&record_header)
             .expect("Deserialization of primary record failure");
-        if self.pending_digests.contains(&record_header.digest) {
-            self.pending_digests.remove(&record_header.digest);
-        }
 
         if !record_header.passed_to_consensus {
-            let msg = ConsensusMessage::Header(
-                record_header.header.clone(),
-                record_header.digest.clone(),
-            );
+            let msg = ConsensusMessage::Header(record_header.header.clone(), record_header.digest);
             self.send_to_consensus(msg)
                 .await
                 .expect("Fail to send to consensus channel");
@@ -354,11 +324,12 @@ impl DagSynchronizer {
 
             self.store
                 .write(record_header.digest.0.to_vec(), record_header.to_bytes())
-                .await;
+                .await
+                .map_err(|e| DagError::StorageFailure {
+                    error: format!("{}", e),
+                })?;
 
-            return if record_header.header.round <= rollback_stop_round
-                || record_header.header.round <= 1
-            {
+            return if record_header.header.round == rollback_stop_round {
                 //no need need to sync parents because we gc them and consensus does not going to order them.
                 Ok(None)
             } else {
@@ -367,7 +338,7 @@ impl DagSynchronizer {
                     .parents
                     .iter()
                     .clone()
-                    .map(|(_, digest)| digest.clone())
+                    .map(|(_, digest)| *digest)
                     .collect();
 
                 Ok(Some(digests))

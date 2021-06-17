@@ -1,4 +1,3 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::*;
 use crate::committee::Committee;
 use crate::messages::messages_tests::*;

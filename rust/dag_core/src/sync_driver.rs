@@ -1,6 +1,6 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
-use crate::types::PrimaryMessage;
-use crypto::Digest;
+
+use crate::store::Store;
+use crate::types::{Digest, PrimaryMessage};
 use futures::future::FutureExt;
 use futures::select;
 use futures::stream::futures_unordered::FuturesUnordered;
@@ -8,9 +8,8 @@ use futures::stream::StreamExt as _;
 use log::*;
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::{sleep, Duration};
+use tokio::time::{delay_for, Duration};
 
 const DELAY: u64 = 25;
 const DELAY_EXPONENT: u64 = 2;
@@ -40,7 +39,7 @@ impl SyncDriver {
                             }
                             else {
                                 // This is the first time we look for this
-                                timings.insert(digest.clone(), (DELAY, VecDeque::new()));
+                                timings.insert(digest, (DELAY, VecDeque::new()));
                                 pending.push(Self::waiter(DELAY, DELAY, (digest, message), store.clone(), commands.clone()));
                             }
                         }
@@ -78,13 +77,13 @@ impl SyncDriver {
         delay: u64,
         deliver: (Digest, PrimaryMessage),
         mut store: Store,
-        commands: Sender<PrimaryMessage>,
+        mut commands: Sender<PrimaryMessage>,
     ) -> (Digest, PrimaryMessage, bool) {
         let (digest, request) = deliver;
 
         // Initial delay
         if initial_delay > 0 {
-            sleep(Duration::from_millis(initial_delay)).await;
+            delay_for(Duration::from_millis(initial_delay)).await;
         }
         // Check before sending
         match store.read(digest.0.to_vec()).await {
@@ -95,7 +94,7 @@ impl SyncDriver {
 
         // Log a message
         let v = match request {
-            PrimaryMessage::SyncHeaderRequest(_, _, _) => "C",
+            PrimaryMessage::SyncCertRequest(_, _, _) => "C",
             PrimaryMessage::SyncTxSend(_, _) => "T",
             _ => "O",
         };
@@ -107,7 +106,7 @@ impl SyncDriver {
             .await
             .expect("Failed to send request");
         // Wait for response
-        sleep(Duration::from_millis(delay)).await;
+        delay_for(Duration::from_millis(delay)).await;
         // Check if response
         match store.read(digest.0.to_vec()).await {
             Ok(Some(_)) => (digest, request, true),

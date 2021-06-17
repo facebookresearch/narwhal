@@ -1,10 +1,8 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::*;
 use crate::messages::messages_tests::*;
 use crate::messages::SignedBlockHeader;
 use crate::types::types_tests::*;
 use bytes::Bytes;
-use crypto::{generate_keypair, SecretKey};
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use rand::{rngs::StdRng, SeedableRng};
@@ -124,12 +122,12 @@ async fn test_primary_net_sender(signed_header: SignedBlockHeader, committee: Co
     };
 }
 
-use crate::types::NodeID;
+use crate::types::{get_keypair, NodeID};
 use tokio::sync::mpsc;
 
 fn fixture_get_nodeid(x: u8) -> NodeID {
     let mut rng = StdRng::from_seed([x; 32]);
-    generate_keypair(&mut rng).0
+    get_keypair(&mut rng).0
 }
 
 #[tokio::test]

@@ -1,8 +1,7 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::committee::*;
 use super::error::*;
 use super::types::*;
-use crypto::{Digest, SecretKey, Signature};
+
 use ed25519_dalek::Digest as DalekDigest;
 use ed25519_dalek::Sha512;
 use serde::{Deserialize, Serialize};
@@ -77,6 +76,18 @@ impl BlockHeader {
     }
 }
 
+impl Digestible for Vec<u8> {
+    fn digest(&self) -> Digest {
+        let mut h: Sha512 = Sha512::new();
+        let mut hash: [u8; 64] = [0u8; 64];
+        let mut digest: [u8; 32] = [0u8; 32];
+        h.update(&self);
+        hash.copy_from_slice(h.finalize().as_slice());
+        digest.copy_from_slice(&hash[..32]);
+        Digest(digest)
+    }
+}
+
 /// This is the data structure the receive re-computes and stores.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedBlockHeader {
@@ -94,18 +105,10 @@ impl SignedBlockHeader {
         signing_channel: &mut Sender<(Digest, oneshot::Sender<Signature>)>,
     ) -> Result<Self, DagError> {
         let data: Vec<u8> = bincode::serialize(&header)?;
-
-        let mut h: Sha512 = Sha512::new();
-        let mut hash: [u8; 64] = [0u8; 64];
-        let mut digest: [u8; 32] = [0u8; 32];
-        h.update(&data);
-        hash.copy_from_slice(h.finalize().as_slice());
-        digest.copy_from_slice(&hash[..32]);
-        let digest = Digest(digest);
-
+        let digest = data.digest();
         let (sender, receiver) = oneshot::channel();
         signing_channel
-            .send((digest.clone(), sender))
+            .send((digest, sender))
             .await
             .map_err(|e| DagError::ChannelError {
                 error: format!("{}", e),
@@ -126,7 +129,7 @@ impl SignedBlockHeader {
     // For debug / testing only.
     pub fn debug_new(header: BlockHeader, secret_key: &SecretKey) -> Result<Self, DagError> {
         let data: Vec<u8> = bincode::serialize(&header)?;
-        let digest = hash_vec(&data);
+        let digest = data.digest();
         let signature = Signature::new(&digest, secret_key);
         Ok(Self {
             data,
@@ -138,7 +141,7 @@ impl SignedBlockHeader {
     /// Verify the signature and return the deserialized block header.
     pub fn check(&self, committee: &Committee) -> Result<BlockHeader, DagError> {
         // Check the digest is good.
-        dag_ensure!(hash_vec(&self.data) == self.digest, DagError::BadDigest);
+        dag_ensure!(self.data.digest() == self.digest, DagError::BadDigest);
 
         // Desirialize & Check instance ID
         let header: BlockHeader = bincode::deserialize(&self.data[..])?;
@@ -147,7 +150,7 @@ impl SignedBlockHeader {
         // Chech author has some stake & signature is correct.
         let weight = committee.stake(&header.author);
         dag_ensure!(weight > 0, DagError::UnknownSigner);
-        self.signature.verify(&self.digest, &header.author)?;
+        self.signature.check(&self.digest, header.author)?;
 
         Ok(header)
     }

@@ -1,11 +1,10 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::*;
 use std::collections::VecDeque;
 
 use crate::committee::Committee;
 use crate::messages::messages_tests::*;
 use crate::types::types_tests::*;
-use crypto::SecretKey;
+
 use std::collections::BTreeSet;
 
 use rstest::*;
@@ -22,7 +21,7 @@ pub fn many_signed_headers(
 ) -> Vec<SignedBlockHeader> {
     let parents: BTreeSet<_> = Certificate::genesis(&committee)
         .iter()
-        .map(|x| (x.primary_id, x.digest.clone()))
+        .map(|x| (x.primary_id, x.digest))
         .collect();
 
     keys.iter()
@@ -56,7 +55,7 @@ pub fn many_signed_headers_rounds(
     //first parents are genesis
     let mut parents: BTreeSet<_> = Certificate::genesis(&committee)
         .iter()
-        .map(|x| (x.primary_id, x.digest.clone()))
+        .map(|x| (x.primary_id, x.digest))
         .collect();
     for i in 1..41 {
         //make a block per author in the non-crashed group
@@ -81,7 +80,7 @@ pub fn many_signed_headers_rounds(
 
         parents = round_headers_certificates
             .iter()
-            .map(|(certificate, header)| (header.author, certificate.digest.clone()))
+            .map(|(certificate, header)| (header.author, certificate.digest))
             .collect();
 
         all_header_certificates.push_back(round_headers_certificates);
@@ -91,8 +90,47 @@ pub fn many_signed_headers_rounds(
 }
 
 #[rstest]
+fn test_get_missing_header_certificate(
+    committee: Committee,
+    mut many_signed_headers_rounds: VecDeque<Vec<(Certificate, BlockHeader)>>,
+) {
+    //Populate the dag but skip a round of blocks and certificates, then check if the processor returns the same set
+
+    let mut processor = Processor::new(committee);
+    let mut i = 1;
+    let mut missing_header_digests = Vec::new();
+    while let Some(round_headers) = many_signed_headers_rounds.pop_front() {
+        if i == 1 {
+            //drop the block header
+            round_headers
+                .iter()
+                .map(|(certificate, _header)| {
+                    processor.add_certificate(certificate.clone());
+                    missing_header_digests.push(certificate.digest);
+                })
+                .for_each(drop);
+        } else {
+            round_headers
+                .iter()
+                .map(|(certificate, header)| {
+                    processor.add_certificate(certificate.clone());
+                    processor.add_header(header.clone(), certificate.digest)
+                })
+                .for_each(drop);
+        }
+        i += 1;
+    }
+
+    let processor_missing = processor.get_missing_header_certificate(i - 1, 1);
+
+    for cert in &processor_missing {
+        assert!(missing_header_digests.contains(&cert.digest))
+    }
+}
+
+#[rstest]
 fn test_add_block(mut processor: Processor, header: BlockHeader, certificate: Certificate) {
-    let digest = certificate.digest.clone();
+    let digest = certificate.digest;
     let round = header.round;
     processor.add_header(header, digest);
     processor.add_certificate(certificate);
@@ -110,7 +148,7 @@ fn test_add_pending_block(
     let (id, secret) = &keys[0];
     let parents = many_signed_headers
         .iter()
-        .map(|x| (id.clone(), x.digest.clone()))
+        .map(|x| (id.clone(), x.digest))
         .collect();
     let round = header.round + 1;
     let blockheader = BlockHeader {

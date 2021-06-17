@@ -1,12 +1,15 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::types::*;
 use crate::committee::Committee;
 use crate::primary::*;
 use crate::primary_net::*;
-use crypto::SecretKey;
+use crate::store::*;
+use futures::executor::block_on;
 use log::*;
-use store::*;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::channel;
+
+#[cfg(test)]
+#[path = "tests/primary_intergration_tests.rs"]
+pub mod primary_intergration_tests;
 
 /// A ManageWorker is instatiated in a physical machine to coordinate with external machines (primary, remote workers)
 pub struct ManagePrimary {
@@ -15,13 +18,7 @@ pub struct ManagePrimary {
 }
 /// The first thing called when booting
 impl ManagePrimary {
-    pub fn new(
-        primary_id: NodeID,
-        secret_key: SecretKey,
-        committee: Committee,
-        tx_consensus_receiving: Sender<ConsensusMessage>,
-        rx_consensus_sending: Receiver<ConsensusMessage>,
-    ) -> Self {
+    pub fn new(primary_id: NodeID, secret_key: SecretKey, committee: Committee) -> Self {
         let mut receive_url = committee.get_url(&primary_id).unwrap();
         let receive_port = receive_url.split(':').collect::<Vec<_>>()[1];
         receive_url = format!("0.0.0.0:{}", receive_port);
@@ -31,11 +28,10 @@ impl ManagePrimary {
         let (tx_primary_sending, rx_primary_sending) = channel(channel_capacity);
         let (tx_primary_receiving, rx_primary_receiving) = channel(channel_capacity);
         let (tx_signature_channel, rx_signature_channel) = channel(channel_capacity);
-        let store = Store::new(&format!(".storage_integrated_{:?}", primary_id))
-            .expect("Failed to create store");
+        let store = block_on(Store::new(format!(".storage_integrated_{:?}", primary_id)));
 
         // 1. Run the signing service.
-        let mut factory = SignatureFactory::new(secret_key, rx_signature_channel);
+        let mut factory = SignatureFactory::new(secret_key.duplicate(), rx_signature_channel);
         tokio::spawn(async move {
             factory.start().await;
         });
@@ -48,8 +44,6 @@ impl ManagePrimary {
             /* receiving_endpoint */ rx_primary_receiving,
             tx_primary_receiving.clone(),
             store,
-            tx_consensus_receiving,
-            rx_consensus_sending,
         );
 
         //boot primary network

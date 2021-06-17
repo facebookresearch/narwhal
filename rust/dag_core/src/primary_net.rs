@@ -1,32 +1,34 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::error::*;
 use super::types::*;
 use crate::committee::*;
 use crate::messages::*;
 use bytes::Bytes;
+use futures::select;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use log::*;
-#[allow(deprecated)]
-use rand::distributions::{Distribution, Exp};
 use std::cmp::min;
 use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::{sleep, Duration, Instant};
+
+use rand::distributions::{Distribution, Exp};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::time::{delay_for, Duration};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 const MESSAGE_HANDLE_DROP_AFTER_N_ROUNDS: u64 = 100;
 
-// #[cfg(test)]
-// #[path = "tests/primary_net_tests.rs"]
-// pub mod primary_net_tests;
 const MIN_MSG_DELAY: f64 = 5.0; // ms
-const ADD_MSG_DELAY_LAMBDA: f64 = 1.0 / 20.0; // ms
+const ADD_MSG_DELAY_LAMBDA: f64 = 1.0 / 5.0; // ms
 const MSG_DELAY: bool = false; // ms
                                // const BYTE_PER_MS : u64 = 1_000;
+
+#[cfg(test)]
+#[path = "tests/primary_net_tests.rs"]
+pub mod primary_net_tests;
 
 pub struct PrimaryNetReceiver {
     id: NodeID,
@@ -44,7 +46,7 @@ impl PrimaryNetReceiver {
     }
 
     pub async fn start_receiving(&mut self) -> Result<(), DagError> {
-        let socket =
+        let mut socket =
             TcpListener::bind(&self.address)
                 .await
                 .map_err(|error| DagError::NetworkError {
@@ -61,7 +63,7 @@ impl PrimaryNetReceiver {
                     error: format!("{}", error),
                 })?;
             info!("Incoming connection from: {:?}", peer.to_string());
-            let deliver_channel = self.deliver_channel.clone();
+            let mut deliver_channel = self.deliver_channel.clone();
             tokio::spawn(async move {
                 let mut transport = Framed::new(stream, LengthDelimitedCodec::new());
                 while let Some(frame) = transport.next().await {
@@ -72,7 +74,6 @@ impl PrimaryNetReceiver {
                                 if let Err(e) = deliver_channel.send(message).await {
                                     error!("Error while delivering: {:?}", e);
                                 }
-                                tokio::task::yield_now().await;
                             }
                             Err(e) => {
                                 warn!("Error while deserializing: {:?}", e);
@@ -199,6 +200,20 @@ impl PrimaryNetSender {
                     temp_response_handles.push_back(handle);
                 }
 
+                PrimaryMessage::SyncCertRequest(_, _, responder) => {
+                    let data: Vec<u8> = bincode::serialize(&message)?;
+
+                    let handle = primary_net.send_message(responder, Bytes::from(data)).await;
+                    temp_response_handles.push_back(handle);
+                }
+
+                PrimaryMessage::SyncCertReply(certificate, requester) => {
+                    let msg = PrimaryMessage::Cert(certificate);
+                    let data: Vec<u8> = bincode::serialize(&msg)?;
+                    let handle = primary_net.send_message(requester, Bytes::from(data)).await;
+                    temp_response_handles.push_back(handle);
+                }
+
                 PrimaryMessage::SyncHeaderRequest(_, _, responder) => {
                     let data: Vec<u8> = bincode::serialize(&message)?;
                     let handle = primary_net.send_message(responder, Bytes::from(data)).await;
@@ -225,6 +240,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::error;
 use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::oneshot;
 
 pub fn make_message(
@@ -372,10 +388,7 @@ impl PrimaryChannelState {
 
                     /* Handle the sending end of the connections */
                     let mut responses_buffer: VecDeque<PrimaryMessageHandle> = VecDeque::new();
-                    let timer = sleep(Duration::from_millis(10));
-                    tokio::pin!(timer);
-
-                    #[allow(deprecated)]
+                    let mut timer = delay_for(Duration::from_millis(10)).fuse();
                     let exp = Exp::new(ADD_MSG_DELAY_LAMBDA);
 
                     'inner: loop {
@@ -404,10 +417,10 @@ impl PrimaryChannelState {
                         }
 
                         // Process next message or response
-                        tokio::select! {
+                        select! {
                             // Only send in steps after a random delay
-                            _ = &mut timer => {
-                                timer.as_mut().reset(Instant::now()+ Duration::from_millis(10));
+                            _ = timer => {
+                                timer = delay_for(Duration::from_millis(10)).fuse();
 
                                 // Check if it is time to send stuff out.
                                 let now_time = SystemTime::now()
@@ -431,7 +444,7 @@ impl PrimaryChannelState {
 
                                     // Always send the message to the other side.
                                     if let Err(_e) = write_t.send(msg.serialized_message.clone()).await {
-                                        error!("Connection write error: {:?}", _e);
+                                        error!("Connection error: {:?}", _e);
                                         buffer.push_front((send_time, msg));
                                         break 'inner;
                                     }
@@ -457,13 +470,15 @@ impl PrimaryChannelState {
                                             // Now we have received the ack, notify delivery.
                                             let data = response_data.freeze();
                                             msg.set_response(data);
-                                        } else {
+                                        }
+                                        else
+                                        {
                                             error!("Received response not expected.");
                                             break 'inner;
                                         }
                                     }
                                     Err(e) => {
-                                        error!("Connection read error: {:?}", e);
+                                        error!("Connection error: {:?}", e);
                                         break 'inner;
                                     }
                                 }
@@ -499,8 +514,7 @@ impl PrimaryChannelState {
                         info!("Connect Error {:?}...{:?}", e, xhost);
 
                         // Wait for 5 sec -- then try to reconnect.
-                        sleep(Duration::from_millis(delay)).await;
-                        info!("waking up to try again for {:?}", xhost);
+                        delay_for(Duration::from_millis(delay)).await;
                         delay = min(delay + delay / 10, 1000 * 60); // Increase the delay.
 
                         while !buffer.is_empty() {
@@ -517,48 +531,19 @@ impl PrimaryChannelState {
 
                         // Read remaining channel -- delete old messages
                         // add current messages to buffer.
-                        // Read remaining channel -- delete old messages
-                        // add current messages to buffer.
-
-                        let current_delay_fut = sleep(Duration::from_millis(2));
-                        tokio::pin!(current_delay_fut);
-
                         loop {
-                            // <<<<<<< HEAD
-                            // let fut = self.transaction_pool.recv(); // Do not await yet!
-
-                            tokio::select! {
-                                                            ret_val = crecv.recv().fuse()=> {
-
-                                                                                            match ret_val {
-                                                                            Some(msg) => {
-                                                                                buffer.push_back((0, msg));
-                                                                            current_delay_fut.as_mut().reset(Instant::now()+ Duration::from_millis(2));
-
-                                                                            }
-                                                                            None => {
-                                                                                info!("Worker channel closed");
-                                                                                return Ok(());
-                                                                            }
-                                                                        }
-                                                                    }
-
-                                                            _ = &mut current_delay_fut => {
-                                                                break;
-                            // =======
-                            //                             match crecv.try_recv() {
-                            //                                 Ok(msg) => {
-                            //                                     buffer.push_back((0, msg));
-                            //                                 }
-                            //                                 Err(TryRecvError::Empty) => {
-                            //                                     break; // continue normal execution.
-                            //                                 }
-                            //                                 Err(_) => {
-                            //                                     info!("Worker channel closed");
-                            //                                     return Ok(());
-                            // >>>>>>> origin/block_explorer
-                                                            }
-                                                        }
+                            match crecv.try_recv() {
+                                Ok(msg) => {
+                                    buffer.push_back((0, msg));
+                                }
+                                Err(TryRecvError::Empty) => {
+                                    break; // continue normal execution.
+                                }
+                                Err(_) => {
+                                    info!("Worker channel closed");
+                                    return Ok(());
+                                }
+                            }
                         }
 
                         // TODO: Here change logic so that if there are no messages in the buffer

@@ -1,7 +1,5 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::error::*;
 use super::types::*;
-use crypto::generate_keypair;
 use rand::{rngs::StdRng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -169,7 +167,7 @@ impl Committee {
                     port: base_port + i as u16,
                 };
                 let worker = Machine {
-                    name: generate_keypair(&mut rng).0,
+                    name: get_keypair(&mut rng).0,
                     host: "127.0.0.1".to_string(),
                     port: base_port + (i + nodes.len()) as u16,
                 };

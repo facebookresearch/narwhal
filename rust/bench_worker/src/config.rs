@@ -1,4 +1,3 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};

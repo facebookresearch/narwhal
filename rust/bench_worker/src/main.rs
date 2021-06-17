@@ -1,14 +1,12 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 mod config;
 extern crate env_logger;
 use bytes::BufMut;
 use bytes::{Bytes, BytesMut};
 use clap::{App, SubCommand};
 use config::*;
-use consensus::Consensus;
-use crypto::{generate_keypair, SecretKey};
 use dag_core::committee::*;
 use dag_core::manage_primary::ManagePrimary;
+use dag_core::manage_worker::*;
 use dag_core::messages::WorkerChannelType;
 use dag_core::types::*;
 use futures::future::join_all;
@@ -19,15 +17,15 @@ use rand::Rng;
 use rand::{rngs::StdRng, SeedableRng};
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use store::Store;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::channel;
-use tokio::time::{interval, sleep, Instant};
+use tokio::runtime::Builder;
+use tokio::time::delay_for;
+use tokio::time::{interval, Instant};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-use worker::manage_worker::*;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+use dag_core::store::Store;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = App::new("Mempool research")
         .version("0.0.1")
         .about("A faster mempool.")
@@ -79,8 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .parse::<usize>()
                     .expect("Batch size should be an integer");
                 let all = subsubm.is_present("all");
-                run_benchmark_node(committee_config_path, node_config_path, batch_size, all)
-                    .await?;
+                run_benchmark_node(committee_config_path, node_config_path, batch_size, all)?;
             }
             ("client", Some(subsubm)) => {
                 let rate = subsubm
@@ -101,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map(|x| x.parse::<SocketAddr>())
                     .collect::<Result<Vec<_>, _>>()
                     .expect("Invalid socket address format");
-                run_benchmark_client(transactions_size, address, rate, others).await?;
+                run_benchmark_client(transactions_size, address, rate, others)?;
             }
             _ => {
                 error!("Invalid benchmark sub command");
@@ -130,9 +127,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Print config files assuming localhost for all network addresses.
 fn generate_configs(nodes: usize, workers: usize) -> Result<(), Box<dyn std::error::Error>> {
     let mut rng = StdRng::from_seed([0; 32]);
-    let primary_keys: Vec<_> = (0..nodes).map(|_| generate_keypair(&mut rng)).collect();
+    let primary_keys: Vec<_> = (0..nodes).map(|_| get_keypair(&mut rng)).collect();
     let workers_keys: Vec<_> = (0..nodes * workers)
-        .map(|_| generate_keypair(&mut rng))
+        .map(|_| get_keypair(&mut rng))
         .collect();
 
     // Make the committee.
@@ -173,8 +170,8 @@ fn generate_configs(nodes: usize, workers: usize) -> Result<(), Box<dyn std::err
     for (i, key) in primary_keys.iter().chain(workers_keys.iter()).enumerate() {
         let (id, secret_key) = key;
         let node_config = NodeConfig {
-            id: id.to_base64(),
-            secret_key: secret_key.to_base64(),
+            id: id.encode_base64(),
+            secret_key: secret_key.encode_base64(),
         };
         let filename = format!("node_config_{:?}.json", i).to_string();
         node_config.write(&filename)?;
@@ -182,12 +179,22 @@ fn generate_configs(nodes: usize, workers: usize) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-async fn run_benchmark_node(
+fn run_benchmark_node(
     committee_config_path: &str,
     node_config_path: &str,
     batch_size: usize,
     all: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut rt = Builder::new()
+        .threaded_scheduler()
+        .core_threads(16)
+        .max_threads(20)
+        .thread_name("bench-node")
+        .thread_stack_size(3 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap();
+
     let committee = Committee::read(committee_config_path)?;
     // TODO: Sanitize committee. There should the same number of workers for all
     // nodes, at least one worker per node, at least one node, and each (address, port)
@@ -201,165 +208,142 @@ async fn run_benchmark_node(
     info!("Node Id: {:?}", node_id);
     info!("Txs batch size set to {}", batch_size);
 
-    // Run the primary and all workers.
-    if all {
-        // Share one store!
-        let store = Store::new(&format!(
-            ".storage_integrated_{:?}_shared",
-            authority.primary.name
-        ))
-        .expect("Failed to create store");
-        for (_, machine) in authority.workers {
-            let worker_id = machine.name;
-            let _ = ManageWorker::new(
-                worker_id,
-                committee.clone(),
-                batch_size,
-                Some(store.clone()),
+    rt.block_on(async {
+        // Run the primary and all workers.
+        if all {
+            // Share one store!
+            let store = Store::new(
+                format!(".storage_integrated_{:?}_shared", authority.primary.name).to_string(),
             )
             .await;
+            for (_, machine) in authority.workers {
+                let worker_id = machine.name;
+                let _ = ManageWorker::new(
+                    worker_id,
+                    committee.clone(),
+                    batch_size,
+                    Some(store.clone()),
+                )
+                .await;
+            }
+            let primary_id = authority.primary.name;
+            let mut primary = ManagePrimary::new(primary_id, secret_key, committee);
+            primary.primary_core.start().await;
+
+        // Run a primary.
+        } else if committee.is_primary(&node_id).unwrap() {
+            let mut primary = ManagePrimary::new(node_id, secret_key, committee);
+            primary.primary_core.start().await;
+
+        // Run a worker.
+        } else {
+            let _ = ManageWorker::new(node_id, committee.clone(), batch_size, None).await;
+            loop {
+                delay_for(Duration::from_millis(500)).await;
+            }
         }
-
-        let (tx_consensus_receiving, rx_consensus_receiving) = channel(1000);
-        let (tx_consensus_sending, rx_consensus_sending) = channel(1000);
-        let mut consensus = Consensus::new(
-            tx_consensus_sending,
-            rx_consensus_receiving,
-            committee.clone(),
-        );
-        tokio::spawn(async move {
-            consensus.start().await;
-        });
-
-        let primary_id = authority.primary.name;
-        let mut primary = ManagePrimary::new(
-            primary_id,
-            secret_key,
-            committee,
-            tx_consensus_receiving,
-            rx_consensus_sending,
-        );
-        primary.primary_core.start().await;
-
-    // Run a primary.
-    } else if committee.is_primary(&node_id).unwrap() {
-        let (tx_consensus_receiving, rx_consensus_receiving) = channel(1000);
-        let (tx_consensus_sending, rx_consensus_sending) = channel(1000);
-        let mut consensus = Consensus::new(
-            tx_consensus_sending,
-            rx_consensus_receiving,
-            committee.clone(),
-        );
-        tokio::spawn(async move {
-            consensus.start().await;
-        });
-
-        let mut primary = ManagePrimary::new(
-            node_id,
-            secret_key,
-            committee,
-            tx_consensus_receiving,
-            rx_consensus_sending,
-        );
-        primary.primary_core.start().await;
-
-    // Run a worker.
-    } else {
-        let _ = ManageWorker::new(node_id, committee.clone(), batch_size, None).await;
-        loop {
-            sleep(Duration::from_millis(500)).await;
-        }
-    }
+    });
     Ok(())
 }
 
-async fn run_benchmark_client(
+fn run_benchmark_client(
     transactions_size: usize,
     address: &str,
     rate: u64,
     others: Vec<SocketAddr>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Wait for all other clients to be ready.
-    wait(others).await;
+    let mut rt = Builder::new()
+        .threaded_scheduler()
+        .core_threads(1)
+        .thread_name("bench-client")
+        .thread_stack_size(3 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap();
 
-    // Connect to our worker.
-    let stream = TcpStream::connect(address)
-        .await
-        .expect("Failed to connect to worker");
-    let (read_sock, write_sock) = stream.into_split();
-    let mut transport_write = FramedWrite::new(write_sock, LengthDelimitedCodec::new());
-    let mut transport_read = FramedRead::new(read_sock, LengthDelimitedCodec::new());
+    rt.block_on(async {
+        // Wait for all other clients to be ready.
+        wait(others).await;
 
-    // Set the type of the channel.
-    let head = WorkerChannelType::Transaction;
-    let header = Bytes::from(bincode::serialize(&head).expect("Error deserializing"));
-    transport_write.send(header).await.expect("Error Sending");
-    let _n = transport_read.next().await.expect("Error on test receive");
+        // Connect to our worker.
+        let stream = TcpStream::connect(address)
+            .await
+            .expect("Failed to connect to worker");
+        let (read_sock, write_sock) = stream.into_split();
+        let mut transport_write = FramedWrite::new(write_sock, LengthDelimitedCodec::new());
+        let mut transport_read = FramedRead::new(read_sock, LengthDelimitedCodec::new());
 
-    // Drain the ACKs from the network.
-    tokio::spawn(async move { while transport_read.next().await.is_some() {} });
+        // Set the type of the channel.
+        let head = WorkerChannelType::Transaction;
+        let header = Bytes::from(bincode::serialize(&head).expect("Error deserializing"));
+        transport_write.send(header).await.expect("Error Sending");
+        let _n = transport_read.next().await.expect("Error on test receive");
 
-    // Send all transactions.
-    const PRECISION: u64 = 20; // Sample precision.
-    const BURST_DURATION: u64 = 1000 / PRECISION;
+        // Drain the ACKs from the network.
+        tokio::spawn(async move { while transport_read.next().await.is_some() {} });
 
-    info!("Sending transactions to node {:?}", address);
-    info!("Transactions size {} bytes", transactions_size);
-    info!("Transactions rate {} tx/s", rate);
+        // Send all transactions.
+        const PRECISION: u64 = 20; // Sample precision.
+        const BURST_DURATION: u64 = 1000 / PRECISION;
 
-    let burst = rate / PRECISION;
-    let mut counter = 0;
-    let interval = interval(Duration::from_millis(BURST_DURATION));
-    tokio::pin!(interval);
-    info!(
-        "Start sending at {:?} ms",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
-    let mut txs = BytesMut::with_capacity(transactions_size);
-    let mut rng = rand::thread_rng();
-    let mut tag = rng.gen::<u64>();
-    'main: loop {
-        interval.as_mut().tick().await;
-        let now = Instant::now();
+        info!("Sending transactions to node {:?}", address);
+        info!("Transactions size {} bytes", transactions_size);
+        info!("Transactions rate {} tx/s", rate);
 
-        // Send burst.
+        let burst = rate / PRECISION;
+        let mut counter = 0;
+        let interval = interval(Duration::from_millis(BURST_DURATION));
+        tokio::pin!(interval);
+        info!(
+            "Start sending at {:?} ms",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        );
+        let mut txs = BytesMut::with_capacity(transactions_size);
+        let mut rng = rand::thread_rng();
+        let mut tag = rng.gen::<u64>();
+        'main: loop {
+            interval.as_mut().tick().await;
+            let now = Instant::now();
 
-        for x in 0..burst {
-            if x == counter % burst {
-                // Send special transaction
-                txs.reserve(transactions_size);
-                txs.put_u64(0);
-                txs.put_u64(counter);
-                txs.resize(transactions_size, 5u8);
-                let frozen_tx = txs.split().freeze();
-                if let Err(e) = transport_write.send(frozen_tx).await {
-                    warn!("Failed to send transaction: {}", e);
-                    break 'main;
-                }
-                info!("Sending special transaction {}", counter);
-            } else {
-                txs.reserve(transactions_size);
-                txs.put_u64(1);
-                txs.put_u64(tag);
-                tag += 1;
-                txs.put_u64(x as u64);
-                txs.resize(transactions_size, 0);
+            // Send burst.
 
-                let frozen_tx = txs.split().freeze();
-                if let Err(e) = transport_write.send(frozen_tx).await {
-                    warn!("Failed to send transaction: {}", e);
-                    break 'main;
+            for x in 0..burst {
+                if x == counter % burst {
+                    // Send special transaction
+                    txs.reserve(transactions_size);
+                    txs.put_u64(0);
+                    txs.put_u64(counter);
+                    txs.resize(transactions_size, 5u8);
+                    let frozen_tx = txs.split().freeze();
+                    if let Err(e) = transport_write.send(frozen_tx).await {
+                        warn!("Failed to send transaction: {}", e);
+                        break 'main;
+                    }
+                    info!("Sending special transaction {}", counter);
+                } else {
+                    txs.reserve(transactions_size);
+                    txs.put_u64(1);
+                    txs.put_u64(tag);
+                    tag += 1;
+                    txs.put_u64(x as u64);
+                    txs.resize(transactions_size, 0);
+
+                    let frozen_tx = txs.split().freeze();
+                    if let Err(e) = transport_write.send(frozen_tx).await {
+                        warn!("Failed to send transaction: {}", e);
+                        break 'main;
+                    }
                 }
             }
+            if now.elapsed().as_millis() > BURST_DURATION as u128 {
+                warn!("Transaction rate too high for this client");
+            }
+            counter += 1;
         }
-        if now.elapsed().as_millis() > BURST_DURATION as u128 {
-            warn!("Transaction rate too high for this client");
-        }
-        counter += 1;
-    }
+    });
     Ok(())
 }
 
@@ -368,7 +352,7 @@ async fn wait(nodes: Vec<SocketAddr>) {
     join_all(nodes.iter().cloned().map(|address| {
         tokio::spawn(async move {
             while TcpStream::connect(address).await.is_err() {
-                sleep(Duration::from_millis(10)).await;
+                delay_for(Duration::from_millis(10)).await;
             }
         })
     }))

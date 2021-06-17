@@ -1,8 +1,7 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::*;
 use crate::messages::messages_tests::*;
 use crate::types::types_tests::*;
-use crypto::SecretKey;
+use futures::executor::block_on;
 use rstest::*;
 use tokio::sync::mpsc::channel;
 use tokio::task;
@@ -15,21 +14,20 @@ async fn test_handle_blockheader_happy(
     mut header: BlockHeader,
 ) {
     let (tx_primary_sending, mut rx_primary_sending) = channel(100);
-    let (tx_primary_receiving, rx_primary_receiving) = channel(100);
+    let (mut tx_primary_receiving, rx_primary_receiving) = channel(100);
     let (tx_signature_channel, rx_signature_channel) = channel(100);
     let (id, secret_key) = keys.pop().unwrap();
-    let mut store = Store::new(".storage_test_handle_blockheader_happy").unwrap();
-    let signed_header = SignedBlockHeader::debug_new(header.clone(), &secret_key).unwrap();
+    let mut store = block_on(Store::new(
+        ".storage_test_handle_blockheader_happy".to_string(),
+    ));
 
     // 1. Run the signing service.
-    let mut factory = SignatureFactory::new(secret_key, rx_signature_channel);
+    let mut factory = SignatureFactory::new(secret_key.duplicate(), rx_signature_channel);
     tokio::spawn(async move {
         factory.start().await;
     });
 
     // 2. Make primary Core.
-    let (tx_consensus_receiving, _rx_consensus_receiving) = channel(1000);
-    let (_tx_consensus_sending, rx_consensus_sending) = channel(1000);
     let mut primary = PrimaryCore::new(
         id,
         committee,
@@ -38,8 +36,6 @@ async fn test_handle_blockheader_happy(
         /* receiving_endpoint */ rx_primary_receiving,
         tx_primary_receiving.clone(),
         store.clone(),
-        tx_consensus_receiving,
-        rx_consensus_sending,
     );
 
     // Depend on the actual genesis certs
@@ -56,11 +52,12 @@ async fn test_handle_blockheader_happy(
     });
 
     for (other_primary_id, digest) in &header.parents {
-        let digest_in_store = PartialCertificate::make_digest(&digest, 0, *other_primary_id);
+        let digest_in_store = PartialCertificate::make_digest(*digest, 0, *other_primary_id);
         let _ = store.notify_read(digest_in_store.0.to_vec()).await;
     }
 
     // 3. Send a block header.
+    let signed_header = SignedBlockHeader::debug_new(header, &secret_key).unwrap();
     let message = PrimaryMessage::Header(signed_header);
     tokio::spawn(async move {
         tx_primary_receiving.send(message).await.unwrap();
@@ -68,22 +65,14 @@ async fn test_handle_blockheader_happy(
 
     // 4. Drain channels.
     // We expect to receive a partial certificate of the block we sent in step 3.
-    loop {
-        match rx_primary_sending
-            .recv()
-            .await
-            .expect("Primary channel is open (1)")
-        {
-            (_round, PrimaryMessage::PartialCert(_partial_certificate)) => {
-                assert!(true);
-                break;
-            }
-            (_, msg) => {
-                println!("{:?}", msg);
-                // assert!(false, "Expected a certificate.");
-            }
-        };
-    }
+    match rx_primary_sending
+        .recv()
+        .await
+        .expect("Primary channel is open (1)")
+    {
+        (_round, PrimaryMessage::PartialCert(_partial_certificate)) => assert!(true),
+        (_, _) => assert!(false, "Expected a certificate."),
+    };
 }
 
 #[rstest]
@@ -99,23 +88,17 @@ async fn test_handle_blockheader_conflicting(
     let (tx_primary_receiving, rx_primary_receiving) = channel(100);
     let (id, secret_key) = keys.pop().unwrap();
     let (tx_signature_channel, rx_signature_channel) = channel(100);
-    let mut store = Store::new(".storage_test_handle_blockheader_conflicting").unwrap();
-    let signed_header = SignedBlockHeader::debug_new(header.clone(), &secret_key).unwrap();
-
-    let mut conflicting_header = header.clone();
-    conflicting_header.metadata = Metadata(Some([1; 32]));
-    let conflicting_signed_header =
-        SignedBlockHeader::debug_new(conflicting_header, &secret_key).unwrap();
+    let mut store = block_on(Store::new(
+        ".storage_test_handle_blockheader_conflicting".to_string(),
+    ));
 
     // 1. Run the signing service.
-    let mut factory = SignatureFactory::new(secret_key, rx_signature_channel);
+    let mut factory = SignatureFactory::new(secret_key.duplicate(), rx_signature_channel);
     tokio::spawn(async move {
         factory.start().await;
     });
 
     // 2. Make primary Core.
-    let (tx_consensus_receiving, _rx_consensus_receiving) = channel(1000);
-    let (_tx_consensus_sending, rx_consensus_sending) = channel(1000);
     let mut primary = PrimaryCore::new(
         id,
         committee,
@@ -124,19 +107,22 @@ async fn test_handle_blockheader_conflicting(
         /* receiving_endpoint */ rx_primary_receiving,
         tx_primary_receiving.clone(),
         store.clone(),
-        tx_consensus_receiving,
-        rx_consensus_sending,
     );
 
     for (_, cert) in primary.processor.dag.get(&0).unwrap() {
-        let digest_in_store = PartialCertificate::make_digest(&cert.digest, 0, cert.primary_id);
+        let digest_in_store = PartialCertificate::make_digest(cert.digest, 0, cert.primary_id);
         let _ = store.notify_read(digest_in_store.0.to_vec()).await;
     }
 
     // 3. Send a block header.
+    let signed_header = SignedBlockHeader::debug_new(header.clone(), &secret_key).unwrap();
     let x = primary.handle_blockheader(signed_header).await;
 
     // 4. Send a conflicting blockheader.
+    let mut conflicting_header = header;
+    conflicting_header.metadata = Metadata(Some([1; 32]));
+    let conflicting_signed_header =
+        SignedBlockHeader::debug_new(conflicting_header, &secret_key).unwrap();
     let y = primary.handle_blockheader(conflicting_signed_header).await;
 
     let in_x = x.expect("No partial cert (1)");
@@ -157,19 +143,17 @@ async fn test_handle_blockheader_repeat(
     let (tx_primary_receiving, rx_primary_receiving) = channel(100);
     let (id, secret_key) = keys.pop().unwrap();
     let (tx_signature_channel, rx_signature_channel) = channel(100);
-    let store = Store::new(".storage_test_handle_blockheader_repeat").unwrap();
-    let signed_header = SignedBlockHeader::debug_new(header.clone(), &secret_key)
-        .expect("Inject a signed block failed.");
+    let store = block_on(Store::new(
+        ".storage_test_handle_blockheader_repeat".to_string(),
+    ));
 
     // 1. Run the signing service.
-    let mut factory = SignatureFactory::new(secret_key, rx_signature_channel);
+    let mut factory = SignatureFactory::new(secret_key.duplicate(), rx_signature_channel);
     tokio::spawn(async move {
         factory.start().await;
     });
 
     // 2. Make primary Core.
-    let (tx_consensus_receiving, _rx_consensus_receiving) = channel(1000);
-    let (_tx_consensus_sending, rx_consensus_sending) = channel(1000);
     let mut primary = PrimaryCore::new(
         id,
         committee,
@@ -178,8 +162,6 @@ async fn test_handle_blockheader_repeat(
         /* receiving_endpoint */ rx_primary_receiving,
         tx_primary_receiving.clone(),
         store.clone(),
-        tx_consensus_receiving,
-        rx_consensus_sending,
     );
 
     task::yield_now().await;
@@ -194,9 +176,12 @@ async fn test_handle_blockheader_repeat(
         .collect();
 
     for (other_primary_id, digest) in &header.parents {
-        let digest_in_store = PartialCertificate::make_digest(&digest, 0, *other_primary_id);
+        let digest_in_store = PartialCertificate::make_digest(*digest, 0, *other_primary_id);
         let _ = primary.store.notify_read(digest_in_store.0.to_vec()).await;
     }
+
+    let signed_header = SignedBlockHeader::debug_new(header.clone(), &secret_key)
+        .expect("Inject a signed block failed.");
 
     let partial_certificate_1 = primary
         .handle_blockheader(signed_header.clone())
@@ -228,21 +213,17 @@ async fn test_handle_blockheader_missing(
     let (tx_primary_receiving, rx_primary_receiving) = channel(100);
     let (id, secret_key) = keys.pop().unwrap();
     let (tx_signature_channel, rx_signature_channel) = channel(100);
-    let store = Store::new(".storage_test_handle_blockheader_missing").unwrap();
-
-    header.transactions_digest.insert((Digest([1; 32]), 0));
-    let signed_header = SignedBlockHeader::debug_new(header.clone(), &secret_key)
-        .expect("Return a new signed header.");
+    let store = block_on(Store::new(
+        ".storage_test_handle_blockheader_missing".to_string(),
+    ));
 
     // 1. Run the signing service.
-    let mut factory = SignatureFactory::new(secret_key, rx_signature_channel);
+    let mut factory = SignatureFactory::new(secret_key.duplicate(), rx_signature_channel);
     tokio::spawn(async move {
         factory.start().await;
     });
 
     // 2. Make primary Core.
-    let (tx_consensus_receiving, _rx_consensus_receiving) = channel(1000);
-    let (_tx_consensus_sending, rx_consensus_sending) = channel(1000);
     let mut primary = PrimaryCore::new(
         id,
         committee,
@@ -251,10 +232,11 @@ async fn test_handle_blockheader_missing(
         /* receiving_endpoint */ rx_primary_receiving,
         tx_primary_receiving.clone(),
         store,
-        tx_consensus_receiving,
-        rx_consensus_sending,
     );
     // 3. Send the blockheader.
+    header.transactions_digest.insert((Digest([1; 32]), 0));
+    let signed_header =
+        SignedBlockHeader::debug_new(header, &secret_key).expect("Return a new signed header.");
     let res = primary
         .handle_blockheader(signed_header)
         .await
@@ -273,18 +255,15 @@ async fn test_handle_partial_certificate(
     let (tx_primary_receiving, rx_primary_receiving) = channel(100);
     let (primary_id, primary_secret_key) = keys.pop().unwrap();
     let (tx_signature_channel, rx_signature_channel) = channel(100);
-    let store = Store::new(".storage_test_primary_core").unwrap();
-    let signed_header = SignedBlockHeader::debug_new(header.clone(), &primary_secret_key).unwrap();
+    let store = block_on(Store::new(".storage_test_primary_core".to_string()));
 
     // Run the signing service.
-    let mut factory = SignatureFactory::new(primary_secret_key, rx_signature_channel);
+    let mut factory = SignatureFactory::new(primary_secret_key.duplicate(), rx_signature_channel);
     tokio::spawn(async move {
         factory.start().await;
     });
 
     // Make primary Core.
-    let (tx_consensus_receiving, _rx_consensus_receiving) = channel(1000);
-    let (_tx_consensus_sending, rx_consensus_sending) = channel(1000);
     println!("Make primary Core.");
     let mut primary = PrimaryCore::new(
         primary_id,
@@ -294,20 +273,17 @@ async fn test_handle_partial_certificate(
         /* receiving_endpoint */ rx_primary_receiving,
         tx_primary_receiving.clone(),
         store,
-        tx_consensus_receiving,
-        rx_consensus_sending,
     );
 
     // Create a signed block header with the primary's signature.
     println!("Create a signed block header with the primary's signature.");
     let round = header.round;
     let sender = header.author;
-    let digest = signed_header.digest.clone();
+    let signed_header = SignedBlockHeader::debug_new(header.clone(), &primary_secret_key).unwrap();
+    let digest = signed_header.digest;
 
     // Init the primary aggregator to wait for partial certificates for this digest.
-    primary
-        .aggregator
-        .init(header, digest.clone(), round, sender);
+    primary.aggregator.init(header, digest, round, sender);
 
     tokio::spawn(async move {
         primary.start().await;
@@ -319,9 +295,9 @@ async fn test_handle_partial_certificate(
     for (id, secret_key) in keys {
         assert!(id != primary_id);
         let partial_certificate =
-            PartialCertificate::debug_new(id, primary_id, digest.clone(), round, &secret_key);
+            PartialCertificate::debug_new(id, primary_id, digest, round, &secret_key);
         let message = PrimaryMessage::PartialCert(partial_certificate);
-        let receiving = tx_primary_receiving.clone();
+        let mut receiving = tx_primary_receiving.clone();
         tokio::spawn(async move {
             receiving.send(message).await.unwrap();
         });
@@ -351,20 +327,18 @@ async fn test_primary_core_sync(
     mut header: BlockHeader,
 ) {
     let (tx_primary_sending, mut rx_primary_sending) = channel(100);
-    let (tx_primary_receiving, rx_primary_receiving) = channel(100);
+    let (mut tx_primary_receiving, rx_primary_receiving) = channel(100);
     let (id, secret_key) = keys.pop().unwrap();
     let (peer_id, peer_secret_key) = keys.pop().unwrap();
     let (tx_signature_channel, rx_signature_channel) = channel(100);
-    let store = Store::new(".storage_test_primary_core_sync").unwrap();
+    let store = block_on(Store::new(".storage_test_primary_core_sync".to_string()));
 
     // 1. Run the signing service.
-    let mut factory = SignatureFactory::new(secret_key, rx_signature_channel);
+    let mut factory = SignatureFactory::new(secret_key.duplicate(), rx_signature_channel);
     tokio::spawn(async move {
         factory.start().await;
     });
 
-    let (tx_consensus_receiving, _rx_consensus_receiving) = channel(1000);
-    let (_tx_consensus_sending, rx_consensus_sending) = channel(1000);
     let mut primary = PrimaryCore::new(
         id,
         committee,
@@ -373,8 +347,6 @@ async fn test_primary_core_sync(
         /* receiving_endpoint */ rx_primary_receiving,
         tx_primary_receiving.clone(),
         store,
-        tx_consensus_receiving,
-        rx_consensus_sending,
     );
 
     //get their Digest
@@ -386,7 +358,7 @@ async fn test_primary_core_sync(
 
     //build a block with the digest
     header.author = peer_id;
-    header.transactions_digest.insert((digest.clone(), 0));
+    header.transactions_digest.insert((digest, 0));
     header.transactions_digest.insert((digest2, 0));
 
     let signed_header = SignedBlockHeader::debug_new(header, &peer_secret_key).unwrap();
@@ -410,17 +382,14 @@ async fn test_primary_core_sync(
 
     // Check the sync requests of the primary
 
-    loop {
-        let (_round, msg) = rx_primary_sending.recv().await.unwrap();
-        match msg {
-            PrimaryMessage::SyncTxSend(info, id) => {
-                println!("Need to sync at worker {:?}, from peer {:?} ", info, id);
-                break;
-            }
-            _ => {
-                println!("{:?}", msg);
-                // assert!(false, "Failed to receive a sync message?");
-            }
-        };
-    }
+    let (_round, msg) = rx_primary_sending.recv().await.unwrap();
+    match msg {
+        PrimaryMessage::SyncTxSend(info, id) => {
+            println!("Need to sync at worker {:?}, from peer {:?} ", info, id)
+        }
+        _ => {
+            println!("{:?}", msg);
+            assert!(false, "Failed to receive a sync message?");
+        }
+    };
 }

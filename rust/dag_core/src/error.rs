@@ -1,5 +1,3 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
-use crypto::CryptoError;
 use displaydoc::Display;
 use thiserror::Error;
 
@@ -22,6 +20,10 @@ macro_rules! dag_ensure {
 /// Custom error type.
 #[derive(Debug, Display, Error)]
 pub enum DagError {
+    // Signature / Certificates verification
+    /// Invalid signature: {error}
+    InvalidSignature { error: String },
+
     /// The digest provided is different from the digest computed.DagError
     BadDigest,
 
@@ -87,9 +89,6 @@ pub enum DagError {
 
     ///The blockheader is not consistent with the provided certificate
     BadHeaderDigest,
-
-    /// Invalid signature
-    InvalidSignature(#[from] CryptoError),
 }
 
 impl From<Box<bincode::ErrorKind>> for DagError {

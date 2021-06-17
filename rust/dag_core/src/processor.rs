@@ -1,8 +1,6 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use super::messages::*;
 use super::types::*;
 use crate::committee::Committee;
-use crypto::Digest;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 
@@ -25,13 +23,10 @@ impl Processor {
     pub fn new(committee: Committee) -> Self {
         let genesis = Certificate::genesis(&committee);
 
-        let dag: HashMap<_, _> = [(
-            0,
-            genesis.into_iter().map(|x| (x.digest.clone(), x)).collect(),
-        )]
-        .iter()
-        .cloned()
-        .collect();
+        let dag: HashMap<_, _> = [(0, genesis.into_iter().map(|x| (x.digest, x)).collect())]
+            .iter()
+            .cloned()
+            .collect();
 
         Self {
             headers: HashMap::new(),
@@ -54,13 +49,35 @@ impl Processor {
         }
         false
     }
+    //Returns all the certificates that do not have a corresponding header
+    pub fn get_missing_header_certificate(
+        &mut self,
+        round_end: RoundNumber,
+        round_start: RoundNumber,
+    ) -> Vec<Certificate> {
+        let mut result = Vec::new();
+        let mut result_digests = Vec::new();
+        for r in round_start..round_end {
+            if let Some(certificates) = self.get_certificates(r) {
+                for (digest, certificate) in certificates {
+                    if self.get_header(&digest, r).is_none()
+                        && !result_digests.contains(&certificate.digest)
+                    {
+                        result.push(certificate.clone());
+                        result_digests.push(certificate.digest);
+                    }
+                }
+            }
+        }
+        result
+    }
 
     /// Add a correct certificate to the storage.
     pub fn add_certificate(&mut self, certificate: Certificate) {
         self.dag
             .entry(certificate.round)
             .or_insert_with(HashMap::new)
-            .insert(certificate.digest.clone(), certificate);
+            .insert(certificate.digest, certificate);
     }
 
     pub fn get_certificates(
@@ -94,6 +111,17 @@ impl Processor {
             return certificates.contains_key(&digest);
         }
         false
+    }
+
+    pub fn get_digest_by_node_round(&self, node: NodeID, round: RoundNumber) -> Option<&Digest> {
+        if let Some(headers) = self.headers.get(&round) {
+            for (digest, header) in headers {
+                if header.author == node {
+                    return Some(digest);
+                }
+            }
+        }
+        None
     }
 
     pub fn get_header(&self, digest: &Digest, round: RoundNumber) -> Option<&BlockHeader> {

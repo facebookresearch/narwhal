@@ -1,2 +1,9 @@
 [workspace]
-members = ["dag_core", "bench_worker", "store", "crypto", "worker", "consensus"]
+members = [
+    "dag_core",
+    "bench_worker",
+]
+
+[profile.release]
+debug = true
+
