@@ -1,387 +1,84 @@
-use super::committee::*;
-use super::error::*;
-use super::messages::*;
-use super::types::*;
-use bincode::Error;
-use crypto::Digest;
-use futures::future::{Fuse, FutureExt};
-use futures::select;
-use futures::stream::futures_unordered::FuturesUnordered;
-use futures::stream::StreamExt;
-use futures::{future::FusedFuture, pin_mut};
-use log::*;
-use rand::seq::SliceRandom;
-use std::cmp::max;
-use std::cmp::min;
-use std::collections::HashSet;
+use crate::error::DagResult;
+use crate::messages::{Certificate, Header};
+use crate::waiter::WaiterMessage;
+use std::collections::HashMap;
 use store::Store;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::{sleep, Duration};
+use tokio::sync::mpsc::Sender;
 
-type DBValue = Vec<u8>;
-
-/// A service that keeps watching for the dependencies of blocks.
-pub async fn header_waiter_process(
-    mut store: Store,          // A copy of the inner store
-    genesis: Vec<Certificate>, // The genesis set of certs
-    mut rx: mpsc::UnboundedReceiver<(SignedBlockHeader, BlockHeader)>, // A channel to receive Headers
-    loopback_commands: Sender<PrimaryMessage>,
-) {
-    // Register the genesis certs ...
-    for cert in &genesis {
-        // let bytes: Vec<u8> = bincode::serialize(&cert)?;
-        let digest_in_store = PartialCertificate::make_digest(&cert.digest, 0, cert.primary_id);
-        let _ = store
-            .write(digest_in_store.0.to_vec(), digest_in_store.0.to_vec()) //digest_in_store.0.to_vec() --> bytes ?
-            .await;
-    }
-
-    // Create an unordered set of futures
-    let mut waiting_headers = FuturesUnordered::new();
-
-    // Now process headers and also headers with satisfied dependencies
-    loop {
-        select! {
-            signer_header_result = waiting_headers.select_next_some() => {
-                // Once we have all header dependencies, we try to re-inject this signed header
-                if let Ok(signed_header) = signer_header_result {
-                    if let Err(e) = loopback_commands.send(PrimaryMessage::Header(signed_header)).await {
-                        error!("Error sending loopback command: {}", e);
-                    }
-                }
-                else {
-                    error!("Error in waiter.");
-                }
-            }
-            msg = rx.recv().fuse() => {
-                if let Some((signed_header, header)) = msg {
-                    let i2_store = store.clone();
-                    let fut = header_waiter(i2_store, signed_header, header);
-                    waiting_headers.push(fut);
-                }
-                else {
-                    // Channel is closed, so we exit.
-                    // Our primary is gone!
-                    warn!("Exiting digest waiter process.");
-                    break;
-                }
-            }
-        }
-    }
+/// The `Synchronizer` checks if we have all batches and parents referenced by a header. If we don't, it sends
+/// a command to the `Waiter` to request the missing data.
+pub struct Synchronizer {
+    /// The persistent storage.
+    store: Store,
+    /// Send commands to the Waiter.
+    tx_waiter: Sender<WaiterMessage>,
 }
 
-/// The future that waits for a set of headers and digest associated with a header.
-pub async fn header_waiter(
-    mut store: Store,                 // A copy of the store
-    signed_header: SignedBlockHeader, // The signed header structure
-    header: BlockHeader,              // The header for which we wait for dependencies.
-) -> Result<SignedBlockHeader, DagError> {
-    debug!(
-        "[DEP] ASK H {:?} D {}",
-        (header.round, header.author),
-        header.transactions_digest.len()
-    );
-    //Note: we now store different digests for header and certificates to avoid false positive.
-    for (other_primary_id, digest) in &header.parents {
-        let digest_in_store =
-            PartialCertificate::make_digest(&digest, header.round - 1, *other_primary_id);
-        if store.notify_read(digest_in_store.0.to_vec()).await.is_err() {
-            return Err(DagError::StorageFailure {
-                error: "Error in reading store from 'header_waiter'.".to_string(),
-            });
-        }
-    }
-    for (digest, _) in &header.transactions_digest {
-        if store.notify_read(digest.0.to_vec()).await.is_err() {
-            return Err(DagError::StorageFailure {
-                error: "Error in reading store from 'header_waiter'.".to_string(),
-            });
-        }
-    }
-    debug!(
-        "[DEP] GOT H {:?} D {}",
-        (header.round, header.author),
-        header.transactions_digest.len()
-    );
-    Ok(signed_header)
-}
-
-pub async fn dag_synchronizer_process(
-    mut get_from_dag: Receiver<SyncMessage>,
-    dag_synchronizer: DagSynchronizer,
-) {
-    let mut digests_to_sync: Vec<Digest> = Vec::new();
-    let mut round_to_sync: RoundNumber = 0;
-    let mut last_synced_round: RoundNumber = 0;
-    let mut rollback_stop_round: RoundNumber = 1;
-    let mut sq: SyncNumber = 0;
-
-    let rollback_fut = Fuse::terminated();
-    pin_mut!(rollback_fut);
-    loop {
-        select! {
-            msg = get_from_dag.recv().fuse() => {
-                if let Some(SyncMessage::SyncUpToRound(round, digests, last_gc_round)) = msg {
-                    if round > round_to_sync {
-                        debug!("DAG sync: received request to sync digests: {:?} up to round {}", digests, round);
-                        round_to_sync = round;
-                        digests_to_sync = digests;
-                        rollback_stop_round = max(last_gc_round+1, 1);
-                        if rollback_fut.is_terminated(){
-                            last_synced_round = round_to_sync;
-                            rollback_fut.set(rollback_headers(dag_synchronizer.clone(), digests_to_sync.clone(), round_to_sync, rollback_stop_round, sq).fuse());
-                            debug!("DAG sync: go.");
-                        }
-                        else {
-                            debug!("DAG sync: drop.");
-                        }
-                    }
-                } else{
-                    warn!("Exiting DagSynchronizer::start().");
-                    break;
-                }
-
-            }
-
-            res = rollback_fut => {
-                if let Err(e) = res{
-                  error!("rollback_headers returns error: {:?}", e);
-                }
-                else{
-                 sq += 1;
-                 if round_to_sync > last_synced_round{
-                     last_synced_round = round_to_sync;
-                     // rollback_stop_round = max(last_synced_round, 1);
-                     rollback_fut.set(rollback_headers(dag_synchronizer.clone(), digests_to_sync.clone(), round_to_sync, rollback_stop_round, sq).fuse());
-                  }
-                }
-
-            }
-        }
-    }
-}
-
-pub async fn handle_header_digest(
-    mut dag_synchronizer: DagSynchronizer,
-    digest: Digest,
-    rollback_stop_round: RoundNumber,
-    sq: SyncNumber,
-) -> Result<Option<Vec<Digest>>, DagError> {
-    //TODO: issue: should we try the processor first? we need concurrent access to it...
-
-    if let Ok(dbvalue) = dag_synchronizer.store.read(digest.to_vec()).await {
-        match dbvalue {
-            None => {
-                debug!("invoking send_sync_header_requests: {:?}", digest);
-                dag_synchronizer
-                    .send_sync_header_requests(digest.clone(), sq)
-                    .await?;
-
-                // Exponential backoff delay
-                let mut delay = 50;
-                loop {
-                    select! {
-                        ret =  dag_synchronizer.store.notify_read(digest.to_vec()).fuse() =>{
-                            if let Ok(record_header) = ret {
-                               return Ok(dag_synchronizer.handle_record_header(record_header, rollback_stop_round).await?);
-                            } else {
-                                //handle the error.
-                                error!("Read returned an error: {:?}", ret);
-                            }
-                        }
-
-                        _ = sleep(Duration::from_millis(delay)).fuse() => {
-                            debug!("Trigger Sync on {:?}", digest);
-                            dag_synchronizer.send_sync_header_requests(digest.clone(), sq).await?;
-                            delay *= 4;
-                        }
-                    }
-                }
-            }
-
-            // HERE
-            Some(record_header) => {
-                let result: Result<HeaderPrimaryRecord, Error> =
-                    bincode::deserialize(&record_header);
-                if let Err(e) = result {
-                    panic!("Reading digest {:?} from store gives us a struct that we cannot deserialize: {}", digest, e);
-                }
-                return Ok(dag_synchronizer
-                    .handle_record_header(record_header, rollback_stop_round)
-                    .await?);
-            }
-        }
-    } else {
-        //handle the error.
+impl Synchronizer {
+    pub fn new(store: Store, tx_waiter: Sender<WaiterMessage>) -> Self {
+        Self { store, tx_waiter }
     }
 
-    Ok(None)
-}
-
-//sync all digests' causal history and pass to consensus
-pub async fn rollback_headers(
-    mut dag_synchronizer: DagSynchronizer,
-    digests: Vec<Digest>,
-    round: RoundNumber,
-    rollback_stop_round: RoundNumber,
-    sq: SyncNumber,
-) -> Result<(), DagError> {
-    let mut asked_for: HashSet<Digest> = HashSet::new();
-    let mut digests_in_process = FuturesUnordered::new();
-
-    for digest in digests {
-        let fut = handle_header_digest(dag_synchronizer.clone(), digest, rollback_stop_round, sq);
-        digests_in_process.push(fut);
-    }
-
-    while !digests_in_process.is_empty() {
-        // let option = digests_in_process.select_next_some().await?;
-        let option = match digests_in_process.select_next_some().await {
-            Ok(option) => option,
-            Err(e) => panic!("Panix {}", e),
-        };
-        if let Some(parents_digests) = option {
-            for digest in parents_digests {
-                // Only ask for each digest once per rollback.
-                if asked_for.contains(&digest) {
-                    continue;
+    /// Returns `true` if we have all transactions of the payload. If we don't, we return false,
+    /// synchronize with other nodes (through our workers), and re-schedule processing of the
+    /// header for when we will have its complete payload.
+    pub async fn missing_payload(&mut self, header: &Header) -> DagResult<bool> {
+        let mut missing = HashMap::new();
+        for (digest, worker_id) in header.payload.iter() {
+            // Check whether we have the batch. If one of our worker has the batch, the primary stores the pair
+            // (digest, worker_id) in its own storage. It is important to verify that we received the batch
+            // from the correct worker id to prevent the following attack:
+            //      1. A Bad node sends a batch X to 2f good nodes through their worker #0.
+            //      2. The bad node proposes a malformed block containing the batch X and claiming it comes
+            //         from worker #1.
+            //      3. The 2f good nodes do not need to sync and thus don't notice that the header is malformed.
+            //         The bad node together with the 2f good nodes thus certify a block containing the batch X.
+            //      4. The last good node will never be able to sync as it will keep sending its sync requests
+            //         to workers #1 (rather than workers #0). Also, clients will never be able to retrieve batch
+            //         X as they will be querying worker #1.
+            let key = [digest.as_ref(), &worker_id.to_le_bytes()].concat();
+            match self.store.read(key).await? {
+                Some(_) => {
+                    // All ok, we have the batch.
                 }
-                asked_for.insert(digest.clone());
-
-                if !dag_synchronizer.pending_digests.contains(&digest) {
-                    debug!("Seems so {}", digest);
-                    dag_synchronizer.pending_digests.insert(digest.clone());
-                    let fut = handle_header_digest(
-                        dag_synchronizer.clone(),
-                        digest,
-                        rollback_stop_round,
-                        sq,
-                    );
-                    digests_in_process.push(fut);
+                None => {
+                    missing.insert(digest.clone(), *worker_id);
                 }
             }
         }
-    }
 
-    let msg = ConsensusMessage::SyncDone(round);
-    dag_synchronizer.send_to_consensus(msg).await?;
-    info!("DAG sync: sent to consensus SyncDone for round  {}", round);
-    Ok(())
-}
-
-#[derive(Clone)]
-pub struct DagSynchronizer {
-    pub id: NodeID,
-    pub send_to_consensus_channel: Sender<ConsensusMessage>,
-    pub send_to_network: Sender<(RoundNumber, PrimaryMessage)>,
-    pub store: Store,
-    pub committee: Committee,
-    pub pending_digests: HashSet<Digest>,
-}
-
-impl DagSynchronizer {
-    pub fn new(
-        id: NodeID,
-        committee: Committee,
-        store: Store,
-        send_to_consensus_channel: Sender<ConsensusMessage>,
-        send_to_network: Sender<(RoundNumber, PrimaryMessage)>,
-    ) -> Self {
-        DagSynchronizer {
-            id,
-            send_to_consensus_channel,
-            send_to_network,
-            store,
-            committee,
-            pending_digests: HashSet::new(),
-        }
-    }
-
-    pub async fn send_sync_header_requests(
-        &mut self,
-        digest: Digest,
-        sq: SyncNumber,
-    ) -> Result<(), DagError> {
-        //Pick random 3 validators. Hopefully one will have the header. We can implement different strategies.
-        let authorities = self.committee.authorities.choose_multiple(
-            &mut rand::thread_rng(),
-            min(self.committee.quorum_threshold() / 2, 3),
-        ); // self.committee.quorum_threshold());
-
-        debug!("asking for header with digest: {:?}", digest);
-
-        for source in authorities {
-            if source.primary.name == self.id {
-                continue;
-            }
-
-            let msg =
-                PrimaryMessage::SyncHeaderRequest(digest.clone(), self.id, source.primary.name);
-
-            // info!("Sync Request (Conse): {:?} from {:?}", digest.clone(), source.primary.name);
-
-            if let Err(e) = self.send_to_network.send((sq, msg)).await {
-                panic!("error: {}", e);
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn handle_record_header(
-        &mut self,
-        record_header: DBValue,
-        rollback_stop_round: RoundNumber,
-    ) -> Result<Option<Vec<Digest>>, DagError> {
-        // let mut record_header: HeaderPrimaryRecord = bincode::deserialize(&record_header[..])?;
-        let mut record_header: HeaderPrimaryRecord = bincode::deserialize(&record_header)
-            .expect("Deserialization of primary record failure");
-        if self.pending_digests.contains(&record_header.digest) {
-            self.pending_digests.remove(&record_header.digest);
+        if missing.is_empty() {
+            return Ok(false);
         }
 
-        if !record_header.passed_to_consensus {
-            let msg = ConsensusMessage::Header(
-                record_header.header.clone(),
-                record_header.digest.clone(),
-            );
-            self.send_to_consensus(msg)
-                .await
-                .expect("Fail to send to consensus channel");
+        self.tx_waiter
+            .send(WaiterMessage::SyncBatches(missing, header.clone()))
+            .await
+            .expect("Failed to send message to inner runner");
+        Ok(true)
+    }
 
-            record_header.passed_to_consensus = true;
-
-            self.store
-                .write(record_header.digest.0.to_vec(), record_header.to_bytes())
-                .await;
-
-            return if record_header.header.round <= rollback_stop_round
-                || record_header.header.round <= 1
-            {
-                //no need need to sync parents because we gc them and consensus does not going to order them.
-                Ok(None)
-            } else {
-                let digests: Vec<Digest> = record_header
-                    .header
-                    .parents
-                    .iter()
-                    .clone()
-                    .map(|(_, digest)| digest.clone())
-                    .collect();
-
-                Ok(Some(digests))
+    /// Returns the parents of a header if we have them all. If at least one parent is missing,
+    /// we return an empty vector, synchronize with other nodes, and re-schedule processing
+    /// of the header for when we will have all the parents.
+    pub async fn get_parents(&mut self, header: &Header) -> DagResult<Vec<Certificate>> {
+        let mut missing = Vec::new();
+        let mut parents = Vec::new();
+        for digest in &header.parents {
+            match self.store.read(digest.to_vec()).await? {
+                Some(certificate) => parents.push(bincode::deserialize(&certificate)?),
+                None => missing.push(digest.clone()),
             };
         }
-        Ok(None)
-    }
 
-    pub async fn send_to_consensus(&mut self, msg: ConsensusMessage) -> Result<(), DagError> {
-        self.send_to_consensus_channel
-            .send(msg)
+        if missing.is_empty() {
+            return Ok(parents);
+        }
+
+        self.tx_waiter
+            .send(WaiterMessage::SyncParents(missing, header.clone()))
             .await
-            .map_err(|e| DagError::ChannelError {
-                error: format!("{}", e),
-            })?;
-        Ok(())
+            .expect("Failed to send message to inner runner");
+        Ok(Vec::new())
     }
 }

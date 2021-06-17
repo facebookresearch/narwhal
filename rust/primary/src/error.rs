@@ -1,7 +1,25 @@
-use crypto::CryptoError;
-use displaydoc::Display;
+use crypto::{CryptoError, Digest, PublicKey};
 use rocksdb;
+use store::StoreError;
 use thiserror::Error;
+
+#[macro_export]
+macro_rules! bail {
+    ($e:expr) => {
+        return Err($e);
+    };
+}
+
+#[macro_export(local_inner_macros)]
+macro_rules! ensure {
+    ($cond:expr, $e:expr) => {
+        if !($cond) {
+            bail!($e);
+        }
+    };
+}
+
+// OLD macros
 
 #[macro_export]
 macro_rules! dag_bail {
@@ -22,85 +40,108 @@ macro_rules! dag_ensure {
 pub type DagResult<T> = Result<T, DagError>;
 
 /// Custom error type.
-#[derive(Debug, Display, Error)]
+#[derive(Debug, Error)]
 pub enum DagError {
-    /// The digest provided is different from the digest computed.DagError
-    BadDigest,
+    #[error("Invalid signature")]
+    InvalidSignature(#[from] CryptoError),
 
-    /// This block has not been delivered to consensus
-    NoBlockAvailable,
+    #[error("Store error: {0}")]
+    StoreError(#[from] StoreError),
 
-    /// Value was not signed by a known authority
-    UnknownSigner,
+    #[error("Serialization error: {0}")]
+    SerializationError(#[from] Box<bincode::ErrorKind>),
 
-    /// Signatures in a certificate must be from different authorities
-    CertificateAuthorityReuse,
+    #[error("Invalid header id")]
+    InvalidHeaderId,
 
-    /// We received a partial certificate from ourselves?
-    CertificateAuthorityOurselves,
+    #[error("Malformed header {0}")]
+    MalformedHeader(Digest),
 
-    /// Signatures in a certificate must form a quorum
+    #[error("Received message from unknown authority {0}")]
+    UnknownAuthority(PublicKey),
+
+    #[error("Received more than one vote from {0}")]
+    AuthorityReuse(PublicKey),
+
+    #[error("Received unexpected vote fo header {0}")]
+    UnexpectedVote(Digest),
+
+    #[error("Received certificate without a quorum")]
     CertificateRequiresQuorum,
 
+    #[error("Parents of header {0} are not a quorum")]
+    HeaderRequiresQuorum(Digest),
+
+    // OLD
+    #[error("The digest provided is different from the digest computed.DagError")]
+    BadDigest,
+
+    #[error("This block has not been delivered to consensus")]
+    NoBlockAvailable,
+
+    #[error("Value was not signed by a known authority")]
+    UnknownSigner,
+
+    #[error("Signatures in a certificate must be from different authorities")]
+    CertificateAuthorityReuse,
+
+    #[error("We received a partial certificate from ourselves?")]
+    CertificateAuthorityOurselves,
+
+    // Signatures in a certificate must form a quorum
+    //CertificateRequiresQuorum,
+
     // Block integrity checks.
-    /// Block must contain 2f+1 references to parents blocks
+    #[error("Block must contain 2f+1 references to parents blocks")]
     BadNumberOfParents,
 
     // Internal Serialization
-    /// Header or certificate internal serialization failed
-    SerializationError(bincode::ErrorKind),
-
-    /// Wrong instance Id
+    // Header or certificate internal serialization failed
+    //SerializationError(bincode::ErrorKind),
+    #[error("Wrong instance Id")]
     BadInstanceId,
 
-    /// We received a late or unexpected partial certificate
+    #[error("We received a late or unexpected partial certificate")]
     UnexpectedOrLatePartialCertificate,
 
     // Storage
-    /// Storage error: {error}
+    #[error("Storage error: {error}")]
     StorageFailure { error: String },
 
     // Channels
-    /// Channel error: {error}
+    #[error("Channel error: {error}")]
     ChannelError { error: String },
 
     // Network
-    /// Network error: {error}
+    #[error("Network error: {error}")]
     NetworkError { error: String },
 
-    /// Unknown node name
+    #[error("Unknown node name")]
     UnknownNode,
 
-    /// Skip Message Round
+    #[error("Skip Message Round")]
     ChannelClosed,
 
-    /// Received conflicting blockheader
+    #[error("Received conflicting blockheader")]
     ConflictingHeader,
 
-    ///parents are not from previous round or has not enough stake
+    #[error("parents are not from previous round or has not enough stake")]
     WrongParents,
 
-    /// Message Handle is dropped and message will not be sent
+    #[error("Message Handle is dropped and message will not be sent")]
     MessageHandleDropped,
 
     // Something is seriously wrong with our internal logic
-    /// Internal error: {error}
+    #[error("Internal error: {error}")]
     InternalError { error: String },
 
-    ///The blockheader is not consistent with the provided certificate
+    #[error("The blockheader is not consistent with the provided certificate")]
     BadHeaderDigest,
 
-    /// Invalid signature
-    InvalidSignature(#[from] CryptoError),
-
-    /// Store error
+    // Invalid signature
+    //InvalidSignature(#[from] CryptoError),
+    #[error("Store error")]
     RocksdbError(rocksdb::Error),
-}
-
-impl From<Box<bincode::ErrorKind>> for DagError {
-    fn from(e: Box<bincode::ErrorKind>) -> Self {
-        DagError::SerializationError(*e)
-    }
 }
 
 impl From<rocksdb::Error> for DagError {

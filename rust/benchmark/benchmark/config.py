@@ -164,11 +164,12 @@ class NodeParameters:
     def __init__(self, json):
         inputs = []
         try:
-            inputs += [json['min_header_delay']]
+            inputs += [json['header_size']]
+            inputs += [json['max_header_delay']]
             inputs += [json['gc_depth']]
             inputs += [json['sync_retry_delay']]
             inputs += [json['sync_retry_nodes']]
-            inputs += [json['max_batch_size']]
+            inputs += [json['batch_size']]
             inputs += [json['max_batch_delay']]
         except KeyError as e:
             raise ConfigError(f'Malformed parameters: missing key {e}')

@@ -1,6 +1,6 @@
 use super::types::*;
 use crate::committee::Committee;
-use crate::primary::*;
+use crate::old_primary::*;
 use crate::primary_net::*;
 use crypto::SecretKey;
 use log::*;

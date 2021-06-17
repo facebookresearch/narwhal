@@ -43,8 +43,8 @@ impl Processor {
 
                 // Deliver the batch's digest.
                 let message = match own_digest {
-                    true => WorkerPrimaryMessage::OwnBatch(id, digest),
-                    false => WorkerPrimaryMessage::OthersBatch(id, digest),
+                    true => WorkerPrimaryMessage::OwnBatch(digest, id),
+                    false => WorkerPrimaryMessage::OthersBatch(digest, id),
                 };
                 let message = bincode::serialize(&message)
                     .expect("Failed to serialize our own worker-primary message");

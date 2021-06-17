@@ -20,11 +20,12 @@ def local(ctx):
         'duration': 20,
     }
     node_params = {
-        'min_header_delay': 0,
+        'header_size': 1_000,
+        'max_header_delay': 100,
         'gc_depth': 50,
         'sync_retry_delay': 10_000,
         'sync_retry_nodes': 3,
-        'max_batch_size': 500_000,
+        'batch_size': 500_000,
         'max_batch_delay': 100
     }
     try:
@@ -102,11 +103,12 @@ def remote(ctx):
         'runs': 1,
     }
     node_params = {
-        'min_header_delay': 0,
+        'header_size': 1_000,
+        'max_header_delay': 200,
         'gc_depth': 50,
         'sync_retry_delay': 10_000,
         'sync_retry_nodes': 3,
-        'max_batch_size': 500_000,
+        'batch_size': 500_000,
         'max_batch_delay': 200
     }
     try:

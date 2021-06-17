@@ -1,6 +1,7 @@
-use super::messages::*;
+use super::old_messages::*;
 use super::types::*;
 use crate::committee::Committee;
+use crate::types::Certificate;
 use crypto::Digest;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;

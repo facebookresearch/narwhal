@@ -155,7 +155,7 @@ impl Worker {
         // (in a reliable manner) the batches to all other workers that share the same `id` as us. Finally, it
         // gathers the 'cancel handlers' of the messages and send them to the `QuorumWaiter`.
         BatchMaker::spawn(
-            self.parameters.max_batch_size,
+            self.parameters.batch_size,
             self.parameters.max_batch_delay,
             /* rx_transaction */ rx_batch_maker,
             /* tx_message */ tx_quorum_waiter,
@@ -264,7 +264,7 @@ impl MessageHandler for TxReceiverHandler {
 /// Defines how the network receiver handles incoming workers messages.
 #[derive(Clone)]
 struct WorkerReceiverHandler {
-    tx_helper: Sender<WorkerMessage>,
+    tx_helper: Sender<(Vec<Digest>, PublicKey)>,
     tx_processor: Sender<SerializedBatchMessage>,
 }
 
@@ -281,9 +281,9 @@ impl MessageHandler for WorkerReceiverHandler {
                 .send(serialized.to_vec())
                 .await
                 .expect("Failed to send batch"),
-            request @ WorkerMessage::BatchRequest(..) => self
+            WorkerMessage::BatchRequest(missing, requestor) => self
                 .tx_helper
-                .send(request)
+                .send((missing, requestor))
                 .await
                 .expect("Failed to send batch request"),
         }

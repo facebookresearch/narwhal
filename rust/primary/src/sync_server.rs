@@ -1,6 +1,7 @@
 use super::error::*;
-use super::messages::*;
+use super::old_messages::*;
 use super::types::*;
+use crate::types::Certificate;
 use crypto::Digest;
 use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};

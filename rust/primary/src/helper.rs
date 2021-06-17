@@ -1,42 +1,34 @@
 use bytes::Bytes;
-use config::{Committee, WorkerId};
+use config::Committee;
 use crypto::{Digest, PublicKey};
 use log::{error, warn};
 use network::SimpleSender;
 use store::Store;
 use tokio::sync::mpsc::Receiver;
 
-#[cfg(test)]
-#[path = "tests/helper_tests.rs"]
-pub mod helper_tests;
-
-/// A task dedicated to help other authorities by replying to their batch requests.
+/// A task dedicated to help other authorities by replying to their certificates requests.
 pub struct Helper {
-    /// The id of this worker.
-    id: WorkerId,
     /// The committee information.
     committee: Committee,
     /// The persistent storage.
     store: Store,
-    /// Input channel to receive batch requests.
-    rx_request: Receiver<(Vec<Digest>, PublicKey)>,
-    /// A network sender to send the batches to the other workers.
+    /// Input channel to receive certificates requests.
+    rx_primaries: Receiver<(Vec<Digest>, PublicKey)>,
+    /// A network sender to reply to the sync requests.
     network: SimpleSender,
 }
 
 impl Helper {
     pub fn spawn(
-        id: WorkerId,
         committee: Committee,
         store: Store,
-        rx_request: Receiver<(Vec<Digest>, PublicKey)>,
+        rx_primaries: Receiver<(Vec<Digest>, PublicKey)>,
     ) {
         tokio::spawn(async move {
             Self {
-                id,
                 committee,
                 store,
-                rx_request,
+                rx_primaries,
                 network: SimpleSender::new(),
             }
             .run()
@@ -45,14 +37,14 @@ impl Helper {
     }
 
     async fn run(&mut self) {
-        while let Some((digests, origin)) = self.rx_request.recv().await {
+        while let Some((digests, origin)) = self.rx_primaries.recv().await {
             // TODO [issue #195]: Do some accounting to prevent bad nodes from monopolizing our resources.
 
             // get the requestors address.
-            let address = match self.committee.worker(&origin, &self.id) {
-                Ok(x) => x.worker_to_worker,
+            let address = match self.committee.primary(&origin) {
+                Ok(x) => x.primary_to_primary,
                 Err(e) => {
-                    warn!("Unexpected batch request: {}", e);
+                    warn!("Unexpected certificate request: {}", e);
                     continue;
                 }
             };

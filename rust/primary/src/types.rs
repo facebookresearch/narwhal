@@ -1,6 +1,6 @@
 use super::committee::*;
 use super::error::*;
-use super::messages::*;
+use super::old_messages::*;
 use crypto::{Digest, PublicKey, SecretKey, Signature};
 use ed25519_dalek::Digest as DalekDigest;
 use ed25519_dalek::Sha512;

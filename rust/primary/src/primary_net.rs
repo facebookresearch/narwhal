@@ -1,7 +1,8 @@
 use super::error::*;
 use super::types::*;
 use crate::committee::*;
-use crate::messages::*;
+use crate::old_messages::*;
+use crate::primary::PrimaryWorkerMessage;
 use bytes::Bytes;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;

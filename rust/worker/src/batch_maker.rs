@@ -24,8 +24,8 @@ pub type Batch = Vec<Transaction>;
 
 /// Assemble clients transactions into batches.
 pub struct BatchMaker {
-    /// The maximum batch size (in bytes).
-    max_batch_size: usize,
+    /// The preferred batch size (in bytes).
+    batch_size: usize,
     /// The maximum delay after which to seal the batch (in ms).
     max_batch_delay: u64,
     /// Channel to receive transactions from the network.
@@ -44,7 +44,7 @@ pub struct BatchMaker {
 
 impl BatchMaker {
     pub fn spawn(
-        max_batch_size: usize,
+        batch_size: usize,
         max_batch_delay: u64,
         rx_transaction: Receiver<Transaction>,
         tx_message: Sender<QuorumWaiterMessage>,
@@ -52,12 +52,12 @@ impl BatchMaker {
     ) {
         tokio::spawn(async move {
             Self {
-                max_batch_size,
+                batch_size,
                 max_batch_delay,
                 rx_transaction,
                 tx_message,
                 workers_addresses,
-                current_batch: Batch::with_capacity(max_batch_size * 2),
+                current_batch: Batch::with_capacity(batch_size * 2),
                 current_batch_size: 0,
                 network: ReliableSender::new(),
             }
@@ -77,7 +77,7 @@ impl BatchMaker {
                 Some(transaction) = self.rx_transaction.recv() => {
                     self.current_batch_size += transaction.len();
                     self.current_batch.push(transaction);
-                    if self.current_batch_size >= self.max_batch_size {
+                    if self.current_batch_size >= self.batch_size {
                         self.seal().await;
                         timer.as_mut().reset(Instant::now() + Duration::from_millis(self.max_batch_delay));
                     }
