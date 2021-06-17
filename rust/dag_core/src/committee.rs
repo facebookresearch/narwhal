@@ -4,6 +4,7 @@ use rand::{rngs::StdRng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
+use std::net::SocketAddr;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Machine {
@@ -107,6 +108,15 @@ impl Committee {
         }
         Err(DagError::UnknownNode)
     }
+    //This function is only used for Hotstuff
+    //so we need to avoid port conflicts with the DAG
+    pub fn address(&self, node: &NodeID) -> Result<SocketAddr, DagError> {
+        self.get_url(node).map(|x| {
+            let mut address: SocketAddr = x.parse().unwrap();
+            address.set_port(address.port() + 1000);
+            address
+        })
+    }
 
     /// Check whether an id is a worker or primary id.
     pub fn is_primary(&self, node: &NodeID) -> Result<bool, DagError> {
@@ -194,6 +204,19 @@ impl Committee {
                     .collect::<Vec<_>>()
             })
             .flatten()
+            .collect()
+    }
+
+    pub fn broadcast_addresses(&self, myself: &NodeID) -> Vec<SocketAddr> {
+        self.authorities
+            .iter()
+            .filter(|x| x.primary.name != *myself)
+            .map(|auth| {
+                let machine = &auth.primary;
+                format!("{}:{}", machine.host, machine.port + 1000)
+                    .parse()
+                    .unwrap()
+            })
             .collect()
     }
 }

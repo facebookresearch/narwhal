@@ -2,6 +2,8 @@
 members = [
     "dag_core",
     "bench_worker",
+    "hotstuff",
+    "network_hs",
 ]
 
 [profile.release]

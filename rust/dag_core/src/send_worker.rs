@@ -2,19 +2,17 @@ use super::types::*;
 use crate::types::{WorkerMessage, WorkerMessageCommand};
 use log::*;
 use std::collections::VecDeque;
-use std::net::SocketAddr;
-use std::time::Duration;
-use tokio::sync::mpsc::{Receiver, Sender};
-// use tokio::time::delay_for;
 use std::convert::TryInto;
-use tokio::time::interval;
+use std::net::SocketAddr;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::time::sleep;
+use tokio::time::{Duration, Instant};
 
 use futures::future::FutureExt;
-use futures::select;
 
-#[cfg(test)]
-#[path = "tests/worker_integration_tests.rs"]
-pub mod worker_integration_tests;
+// #[cfg(test)]
+// #[path = "tests/worker_integration_tests.rs"]
+// pub mod worker_integration_tests;
 
 /// The interval between blocks generated. A block is generated when it reaches the batch_size,
 //  or then the WORKER_BLOCK_INTERVAL_TIME has elapsed if it is not empty.
@@ -54,14 +52,12 @@ impl SendWorker {
         let mut special = 0;
 
         let const_small_interval = Duration::from_millis(WORKER_BLOCK_INTERVAL_TIME); // ms
-        let interval = interval(const_small_interval);
-        tokio::pin!(interval);
-        // let mut current_delay_fut = delay_for(const_small_interval).fuse();
-
+        let current_delay_fut = sleep(const_small_interval);
+        tokio::pin!(current_delay_fut);
         loop {
             // let fut = self.transaction_pool.recv(); // Do not await yet!
 
-            select! {
+            tokio::select! {
                 tx = self.transaction_pool.recv().fuse() => {
                     if let Some((_ip, tx)) = tx {
                         // Increase the counter if we have a special transaction.
@@ -89,10 +85,15 @@ impl SendWorker {
                         exit = true;
                     }
                 }
-                _ = interval.tick().fuse() => {
+                _ = &mut current_delay_fut => {
                     if !buf.is_empty() {
                         make_batch = true;
                     }
+                    else
+                    {
+                        current_delay_fut.as_mut().reset(Instant::now()+ const_small_interval);
+                    }
+
                 }
             }
 
@@ -117,6 +118,10 @@ impl SendWorker {
 
                 special = 0;
                 buf = VecDeque::<Transaction>::with_capacity(self.batch_size);
+                current_delay_fut
+                    .as_mut()
+                    .reset(Instant::now() + const_small_interval);
+
                 special_list = Vec::new();
             }
 

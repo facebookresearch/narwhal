@@ -14,6 +14,7 @@ pub mod consensus;
 //pub mod consensus_2;
 pub mod manage_primary;
 pub mod manage_worker;
+pub mod mempool;
 pub mod messages;
 pub mod net;
 pub mod primary;

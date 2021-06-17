@@ -19,15 +19,14 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::time::{delay_for, Duration};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 const BROADCAST_RESPONSE_CHANNEL_SIZE: usize = 100;
 // const WAIT_FOR_REMAINING_F_MS : u64= 107;
 
-#[cfg(test)]
-#[path = "tests/net_tests.rs"]
-mod net_tests;
+// #[cfg(test)]
+// #[path = "tests/net_tests.rs"]
+// mod net_tests;
 
 pub struct Broadcaster {
     // The node ID of this broadcaster
@@ -73,7 +72,7 @@ impl Broadcaster {
             Bytes::from(bincode::serialize(&WorkerChannelType::Worker).expect("Bad serialization"));
         let mut net = PrimaryNet::new(self.worker_id, addr, Some(banner)).await;
 
-        let (mut round_responses_tx, mut round_responses_rx) =
+        let (round_responses_tx, mut round_responses_rx) =
             channel::<(
                 usize,
                 NodeID,
@@ -84,13 +83,14 @@ impl Broadcaster {
 
         let cmt = self.committee.clone();
         // let node = self.node;
-        let mut delivered_channel = self.delivered_channel.clone();
+        let delivered_channel = self.delivered_channel.clone();
         let myself = self.worker_id;
         tokio::spawn(async move {
             let start_stake = cmt.stake_worker(&myself);
             // Each of these is a vector of responses for a round
+
             'mainloop: while let Some((_subblock_id, node_id, data, responses, special_tags)) =
-                round_responses_rx.next().await
+                round_responses_rx.recv().await
             {
                 // We get responses in any order
 
@@ -158,7 +158,7 @@ impl Broadcaster {
         let mut subblock_id: usize = 0;
 
         // First get messages ... for current round.
-        while let Some(msg) = self.input_channel.next().await {
+        while let Some(msg) = self.input_channel.recv().await {
             // Serialize and send to broadcast workers.
             let data = Bytes::from(bincode::serialize(&msg.message).unwrap());
             let responses = net.broadcast_message(data.clone()).await;
@@ -189,7 +189,7 @@ pub async fn worker_server_start(
     synchronize_message_output: Sender<WorkerMessageCommand>,
     transaction_output: Sender<(SocketAddr, Transaction)>,
 ) -> Result<(), Box<dyn error::Error>> {
-    let mut listener = TcpListener::bind(url).await?;
+    let listener = TcpListener::bind(url).await?;
 
     loop {
         // Listen for new connections.
@@ -329,7 +329,7 @@ async fn handle_worker_channel(
 
 async fn handle_transaction_channel(
     mut transport: Framed<TcpStream, LengthDelimitedCodec>,
-    mut transaction_out: Sender<(SocketAddr, Transaction)>,
+    transaction_out: Sender<(SocketAddr, Transaction)>,
     ip: SocketAddr,
 ) {
     // In a loop, read data from the socket and write the data back.

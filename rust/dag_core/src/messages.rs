@@ -9,9 +9,9 @@ use std::collections::BTreeSet;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
-#[cfg(test)]
-#[path = "tests/messages_tests.rs"]
-pub mod messages_tests;
+// #[cfg(test)]
+// #[path = "tests/messages_tests.rs"]
+// pub mod messages_tests;
 
 /// This is the data structure the receive re-computes.
 #[derive(Debug, Clone, Serialize, Deserialize)]

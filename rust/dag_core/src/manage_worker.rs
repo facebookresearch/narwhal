@@ -16,12 +16,12 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Receiver;
-use tokio::time::delay_for;
+use tokio::time::sleep;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-#[cfg(test)]
-#[path = "tests/primary_worker_intergration_tests.rs"]
-pub mod primary_worker_intergration_tests;
+// #[cfg(test)]
+// #[path = "tests/primary_worker_intergration_tests.rs"]
+// pub mod primary_worker_intergration_tests;
 
 /// A ManageWorker is instatiated in a physical machine to coordinate with external machines (primary, remote workers)
 pub struct ManageWorker {
@@ -222,7 +222,7 @@ pub async fn handle_digests(
             Err(e) => {
                 warn!("Connection Error to {:?}: {:?}", url.clone(), e);
                 // Wait for 5 sec -- then try to reconnect.
-                delay_for(Duration::from_millis(delay)).await;
+                sleep(Duration::from_millis(delay)).await;
                 delay = min(delay + delay / 10, 1000 * 60); // Increase the delay.
             }
         }

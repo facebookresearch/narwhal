@@ -6,16 +6,15 @@ use super::types::*;
 use crate::store::DBValue;
 use bincode::Error;
 use futures::future::{Fuse, FutureExt};
-use futures::select;
 use futures::stream::futures_unordered::FuturesUnordered;
-use futures::stream::StreamExt;
 use futures::{future::FusedFuture, pin_mut};
+use futures::{select, StreamExt};
 use log::*;
 use rand::seq::SliceRandom;
 use std::cmp::min;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::{delay_for, Duration};
+use tokio::time::{sleep, Duration};
 
 use std::cmp::max;
 
@@ -24,7 +23,7 @@ pub async fn header_waiter_process(
     mut store: Store,          // A copy of the inner store
     genesis: Vec<Certificate>, // The genesis set of certs
     mut rx: mpsc::UnboundedReceiver<(SignedBlockHeader, BlockHeader)>, // A channel to receive Headers
-    mut loopback_commands: Sender<PrimaryMessage>,
+    loopback_commands: Sender<PrimaryMessage>,
 ) {
     // Register the genesis certs ...
     for cert in &genesis {
@@ -37,7 +36,6 @@ pub async fn header_waiter_process(
 
     // Create an unordered set of futures
     let mut waiting_headers = FuturesUnordered::new();
-
     // Now process headers and also headers with satisfied dependencies
     loop {
         select! {
@@ -52,7 +50,7 @@ pub async fn header_waiter_process(
                     error!("Error in waiter.");
                 }
             }
-            msg = rx.next().fuse() => {
+            msg = rx.recv().fuse() => {
                 if let Some((signed_header, header)) = msg {
                     let i2_store = store.clone();
                     let fut = header_waiter(i2_store, signed_header, header);
@@ -119,7 +117,8 @@ pub async fn dag_synchronizer_process(
     pin_mut!(rollback_fut);
     loop {
         select! {
-            msg = get_from_dag.next().fuse() => {
+
+            msg = get_from_dag.recv().fuse() => {
                 if let Some(SyncMessage::SyncUpToRound(round, digests, last_gc_round)) = msg {
                     if round > round_to_sync {
                         debug!("DAG sync: received request to sync digests: {:?} up to round {}", digests, round);
@@ -188,7 +187,7 @@ pub async fn handle_header_digest(
                             }
                         }
 
-                        _ = delay_for(Duration::from_millis(delay)).fuse() => {
+                        _ = sleep(Duration::from_millis(200)).fuse() => {
                             debug!("Trigger Sync on {:?}", digest);
                             dag_synchronizer.send_sync_header_requests(digest, sq).await?;
                             delay *= 4;
@@ -315,7 +314,20 @@ impl DagSynchronizer {
             .expect("Deserialization of primary record failure");
 
         if !record_header.passed_to_consensus {
-            let msg = ConsensusMessage::Header(record_header.header.clone(), record_header.digest);
+            let digest_in_store = PartialCertificate::make_digest(
+                record_header.digest,
+                record_header.header.round,
+                record_header.header.author,
+            );
+            let cert_raw = self
+                .store
+                .notify_read(digest_in_store.0.to_vec())
+                .await
+                .unwrap();
+            let cert: Certificate =
+                bincode::deserialize(&cert_raw).expect("Deserialization of certificate failure");
+
+            let msg = ConsensusMessage::Header(cert);
             self.send_to_consensus(msg)
                 .await
                 .expect("Fail to send to consensus channel");

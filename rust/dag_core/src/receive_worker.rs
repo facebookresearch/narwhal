@@ -7,9 +7,9 @@ use ed25519_dalek::Sha512;
 use log::*;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-#[cfg(test)]
-#[path = "tests/receiver_tests.rs"]
-mod receiver_tests;
+// #[cfg(test)]
+// #[path = "tests/receiver_tests.rs"]
+// mod receiver_tests;
 
 /// A ReceiveWorker is instatiated in a machine in order to receive part of the block in one round
 pub struct ReceiveWorker {

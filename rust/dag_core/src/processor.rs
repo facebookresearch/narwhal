@@ -4,9 +4,9 @@ use crate::committee::Committee;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 
-#[cfg(test)]
-#[path = "tests/processor_tests.rs"]
-pub mod processor_tests;
+// #[cfg(test)]
+// #[path = "tests/processor_tests.rs"]
+// pub mod processor_tests;
 
 pub struct Processor {
     /// Holds all headers.

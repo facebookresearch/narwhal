@@ -7,9 +7,9 @@ use std::fmt;
 use tokio::sync::oneshot;
 use tokio::task;
 
-#[cfg(test)]
-#[path = "tests/store_tests.rs"]
-mod storage_tests;
+// #[cfg(test)]
+// #[path = "tests/store_tests.rs"]
+// mod storage_tests;
 
 #[derive(Debug)]
 pub struct StoreError {

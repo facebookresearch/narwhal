@@ -5,27 +5,24 @@ use super::processor::*;
 use super::store::Store;
 use super::types::Metadata;
 use super::types::*;
-use crate::consensus::Consensus;
+use crate::mempool::*;
 use crate::primary_net::PrimaryNetSender;
 use crate::sync_driver::SyncDriver;
 use crate::synchronizer::*;
 use futures::future::FutureExt;
-use futures::select;
-use futures::stream::StreamExt;
+
 use log::*;
 use std::collections::{BTreeSet, HashMap};
-use std::convert::TryInto;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{delay_for, Duration};
-use tokio::time::{interval, Instant};
-// use rand::Rng;
+use tokio::time::{sleep, Duration, Instant};
 
-#[cfg(test)]
-#[path = "tests/primary_tests.rs"]
-pub mod primary_tests;
+// #[cfg(test)]
+// #[path = "tests/primary_tests.rs"]
+// pub mod primary_tests;
 
 const BLOCK_TIMER_RESOLUTION: u64 = 53; // 100; // ms
 
@@ -80,6 +77,8 @@ impl PrimaryCore {
         receiving_endpoint: Receiver<PrimaryMessage>,
         loopback_receiving_endpoint: Sender<PrimaryMessage>,
         store: Store,
+        // external_consensus: bool,
+        get_from_hotstuff: Receiver<MempoolMessage>,
     ) -> Self {
         let inner_genesis = Certificate::genesis(&committee);
 
@@ -99,15 +98,18 @@ impl PrimaryCore {
                 .await;
         });
 
-        let (tx_consensus_receiving, rx_consensus_receiving) = channel(1000);
-        let (tx_consensus_sending, rx_consensus_sending) = channel(1000);
-        let mut consensus = Consensus::new(
-            tx_consensus_sending,
-            rx_consensus_receiving,
+        let (tx_mempool_receiving, rx_mempool_receiving) = channel(1000);
+        let (tx_mempool_sending, rx_mempool_sending) = channel(1000);
+        let mut mempool = Mempool::new(
+            tx_mempool_sending,
+            rx_mempool_receiving,
             committee.clone(),
+            id,
+            // external_consensus,
+            get_from_hotstuff,
         );
         tokio::spawn(async move {
-            consensus.start().await;
+            mempool.start().await;
         });
 
         let (tx_synchronizer_to_network, rx_synchronizer_to_network) = channel(1000);
@@ -124,7 +126,7 @@ impl PrimaryCore {
             id,
             committee.clone(),
             store.clone(),
-            tx_consensus_receiving,
+            tx_mempool_receiving,
             tx_synchronizer_to_network,
         );
         let (tx_synchronizer_receiving, rx_synchronizer_receiving) = channel(1000);
@@ -147,7 +149,7 @@ impl PrimaryCore {
             received_headers: HashMap::new(),
             header_waiter_channel: tx,
             // send_to_consensus: tx_consensus_receiving,
-            get_from_consensus: rx_consensus_sending,
+            get_from_consensus: rx_mempool_sending,
             send_to_synchronizer: tx_synchronizer_receiving,
             last_garbage_collected_round: 0,
             tx_missing,
@@ -510,7 +512,9 @@ impl PrimaryCore {
         let digest = certificate.digest;
         let round = certificate.round;
         let header = certificate.header.clone();
+
         //TODO: No Longer important since we get certificates with headers
+
         // Add it to our persistent storage.
         //Note: it is important to distinguish from header digest. Otherwise, we might think that we have all parents certificates when actually we have only the headers
         let bytes: Vec<u8> = bincode::serialize(&certificate)?;
@@ -567,6 +571,7 @@ impl PrimaryCore {
         &mut self,
         partial: PartialCertificate,
     ) -> Result<Option<Certificate>, DagError> {
+        //   debug!("handling partial certificate {:?}", partial);
         if self.aggregator.partial.is_none()
             || self.aggregator.partial.as_mut().unwrap().round != partial.round
         {
@@ -712,19 +717,15 @@ impl PrimaryCore {
         }
 
         let mut last_sent_round = 0;
-        let mut last_sent_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
 
-        let interval = interval(Duration::from_millis(BLOCK_TIMER_RESOLUTION));
-        tokio::pin!(interval);
+        let timer = sleep(Duration::from_millis(BLOCK_TIMER_RESOLUTION));
+        tokio::pin!(timer);
 
         loop {
-            select! {
+            tokio::select! {
                 // We trigger progress in the Primary server when:
                 // 1. We receive a message from another peer primary.
-                msg = self.receiving_endpoint.next().fuse() => {
+                msg = self.receiving_endpoint.recv().fuse() => {
                     if let Some(msg) = msg {
                         if let Err(e) = self.handle_message(msg).await {
                             error!("{}", e);
@@ -734,7 +735,7 @@ impl PrimaryCore {
                 }
 
                 // 2. We have just sealed some more state into the consensus and are trigerring cleanups.
-                msg = self.get_from_consensus.next().fuse() => {
+                msg = self.get_from_consensus.recv().fuse() => {
                     if let Some(msg) = msg {
                         match msg {
                             ConsensusMessage::OrderedHeaders(committed_sequence, last_committed_round) => {
@@ -757,7 +758,12 @@ impl PrimaryCore {
 
                 // 3. The timer expires and we might, as a result want
                 // to make a  new block.
-                _ = interval.tick().fuse() => {
+                _ = &mut timer => {
+
+
+
+            if self.round > last_sent_round {
+                // Check if we should send the new block header
 
                     if self.round > last_sent_round {
                         // Check if we should send the new block header
@@ -775,10 +781,16 @@ impl PrimaryCore {
                             }
                         }
                     }
+                }
+                 timer
+                        .as_mut()
+                        .reset(Instant::now() + Duration::from_millis(BLOCK_TIMER_RESOLUTION));
                 },
 
+
+
                 // Receive messages from the sync driver and forwards them to the network.
-                message = self.rx_sync_commands.next().fuse() => {
+                message = self.rx_sync_commands.recv().fuse() => {
                     if let Some(message) = message {
                         self.send_message(message).await.expect("Failed to forward sync request to the network");
                     }

@@ -1,4 +1,3 @@
-
 use crate::store::Store;
 use crate::types::{Digest, PrimaryMessage};
 use futures::future::FutureExt;
@@ -9,7 +8,7 @@ use log::*;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::{delay_for, Duration};
+use tokio::time::{sleep, Duration};
 
 const DELAY: u64 = 25;
 const DELAY_EXPONENT: u64 = 2;
@@ -83,7 +82,7 @@ impl SyncDriver {
 
         // Initial delay
         if initial_delay > 0 {
-            delay_for(Duration::from_millis(initial_delay)).await;
+            sleep(Duration::from_millis(initial_delay)).await;
         }
         // Check before sending
         match store.read(digest.0.to_vec()).await {
@@ -106,7 +105,7 @@ impl SyncDriver {
             .await
             .expect("Failed to send request");
         // Wait for response
-        delay_for(Duration::from_millis(delay)).await;
+        sleep(Duration::from_millis(delay)).await;
         // Check if response
         match store.read(digest.0.to_vec()).await {
             Ok(Some(_)) => (digest, request, true),

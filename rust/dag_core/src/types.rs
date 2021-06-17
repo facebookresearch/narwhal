@@ -12,12 +12,13 @@ use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::convert::TryInto;
+use std::fmt;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::oneshot;
 
-#[cfg(test)]
-#[path = "tests/types_tests.rs"]
-pub mod types_tests;
+// #[cfg(test)]
+// #[path = "tests/types_tests.rs"]
+// pub mod types_tests;
 
 pub type NodeID = EdPublicKeyBytes;
 pub type RoundNumber = u64;
@@ -38,6 +39,13 @@ pub struct Digest(pub [u8; 32]);
 
 pub trait Digestible {
     fn digest(&self) -> Digest;
+}
+impl fmt::Display for Digest {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let s = base64::encode(&self.0);
+        write!(f, "{}", s)?;
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for Digest {
@@ -91,8 +99,16 @@ impl Drop for SecretKey {
     }
 }
 
-#[derive(Eq, PartialEq, Ord, PartialOrd, Copy, Clone, Hash)]
+#[derive(Eq, PartialEq, Ord, PartialOrd, Copy, Clone, Hash, Default)]
 pub struct EdPublicKeyBytes(pub [u8; dalek::PUBLIC_KEY_LENGTH]);
+
+impl fmt::Display for EdPublicKeyBytes {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let s = base64::encode(&self.0[..]);
+        write!(f, "{}", s)?;
+        Ok(())
+    }
+}
 
 impl EdPublicKeyBytes {
     pub fn from_base64(s: &str) -> Result<Self, failure::Error> {
@@ -367,7 +383,7 @@ impl PartialCertificate {
         origin_node: NodeID,
         digest: Digest,
         round: RoundNumber,
-        mut signing_channel: Sender<(Digest, oneshot::Sender<Signature>)>,
+        signing_channel: Sender<(Digest, oneshot::Sender<Signature>)>,
     ) -> Result<Self, DagError> {
         let (sender, receiver) = oneshot::channel();
         let tmp_digest = Self::make_digest(digest, round, origin_node);
@@ -536,11 +552,26 @@ pub enum PrimaryMessage {
     SyncHeaderRequest(Digest, NodeID, NodeID),
     SyncHeaderReply((Certificate, BlockHeader), NodeID),
 }
+#[derive(Debug)]
+pub enum PayloadStatus {
+    Accept,
+    Reject,
+    Wait(Vec<Vec<u8>>),
+}
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ConsensusMessage {
-    Header(BlockHeader, Digest),
+    Header(Certificate),
     SyncDone(RoundNumber),
     OrderedHeaders(Vec<(BlockHeader, Digest)>, RoundNumber),
+    Cleanup(Certificate),
+}
+
+#[derive(Debug)]
+pub enum MempoolMessage {
+    GetPayload(oneshot::Sender<Vec<Vec<u8>>>),
+    VerifyPayload(Vec<Vec<u8>>, oneshot::Sender<PayloadStatus>),
+    CommitedCertificate(Vec<Vec<u8>>),
 }
 
 pub enum SyncMessage {

@@ -6,10 +6,11 @@ use crate::store::*;
 use futures::executor::block_on;
 use log::*;
 use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::Receiver;
 
-#[cfg(test)]
-#[path = "tests/primary_intergration_tests.rs"]
-pub mod primary_intergration_tests;
+// #[cfg(test)]
+// #[path = "tests/primary_intergration_tests.rs"]
+// pub mod primary_intergration_tests;
 
 /// A ManageWorker is instatiated in a physical machine to coordinate with external machines (primary, remote workers)
 pub struct ManagePrimary {
@@ -18,7 +19,13 @@ pub struct ManagePrimary {
 }
 /// The first thing called when booting
 impl ManagePrimary {
-    pub fn new(primary_id: NodeID, secret_key: SecretKey, committee: Committee) -> Self {
+    pub fn new(
+        primary_id: NodeID,
+        secret_key: SecretKey,
+        committee: Committee,
+        //external_consensus: bool,
+        get_from_hotstuff: Receiver<MempoolMessage>,
+    ) -> Self {
         let mut receive_url = committee.get_url(&primary_id).unwrap();
         let receive_port = receive_url.split(':').collect::<Vec<_>>()[1];
         receive_url = format!("0.0.0.0:{}", receive_port);
@@ -44,6 +51,8 @@ impl ManagePrimary {
             /* receiving_endpoint */ rx_primary_receiving,
             tx_primary_receiving.clone(),
             store,
+            //external_consensus,
+            get_from_hotstuff,
         );
 
         //boot primary network

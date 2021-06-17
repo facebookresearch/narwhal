@@ -52,8 +52,8 @@ impl Consensus {
         loop {
             if let Some(msg) = self.get_from_dag.recv().await {
                 match msg {
-                    ConsensusMessage::Header(header, digest) => {
-                        self.add_header(header, digest);
+                    ConsensusMessage::Header(cert) => {
+                        self.add_header(cert.header, cert.digest);
                     }
                     ConsensusMessage::SyncDone(round) => {
                         info!("SyncDone for rounde {:?}", round);

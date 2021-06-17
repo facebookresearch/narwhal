@@ -10,12 +10,12 @@ use futures::select;
 use futures::stream::futures_unordered::FuturesUnordered;
 use futures::stream::StreamExt;
 use log::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-#[cfg(test)]
-#[path = "tests/sync_worker_tests.rs"]
-mod sync_worker_tests;
+// #[cfg(test)]
+// #[path = "tests/sync_worker_tests.rs"]
+// mod sync_worker_tests;
 
 /// Create a future that handles message response and cancel handles -- either get a
 /// response or drop when the store tell us the blob can be read.
@@ -72,7 +72,7 @@ pub async fn sync_pool_start(
                 // No need to do anything here.
                 continue;
             }
-            msg = input_channel.next().fuse() => {
+            msg = input_channel.recv().fuse() => {
 
                 if msg.is_none() {
                     break;

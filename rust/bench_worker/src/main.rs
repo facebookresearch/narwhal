@@ -7,11 +7,16 @@ use config::*;
 use dag_core::committee::*;
 use dag_core::manage_primary::ManagePrimary;
 use dag_core::manage_worker::*;
+
 use dag_core::messages::WorkerChannelType;
+use dag_core::store::Store;
 use dag_core::types::*;
 use futures::future::join_all;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
+use hotstuff::Consensus;
+use hotstuff::Export;
+use hotstuff::Parameters;
 use log::*;
 use rand::Rng;
 use rand::{rngs::StdRng, SeedableRng};
@@ -19,11 +24,10 @@ use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
 use tokio::runtime::Builder;
-use tokio::time::delay_for;
+use tokio::sync::mpsc::channel;
+use tokio::time::sleep;
 use tokio::time::{interval, Instant};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-
-use dag_core::store::Store;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = App::new("Mempool research")
@@ -38,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     --batch=<INT> 'The transactions batch size'
                     --node=<PATH> 'Sets the file describing the private configurations of the node'
                     --all 'Whether to run the primary and all workers or only one machine'
-                ")
+                    --parameters=[FILE] 'The file containing the node parameters'")
             )
             .subcommand(SubCommand::with_name("client")
                 .args_from_usage("
@@ -71,13 +75,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ("node", Some(subsubm)) => {
                 let committee_config_path = subsubm.value_of("committee").unwrap();
                 let node_config_path = subsubm.value_of("node").unwrap();
+                let parameters_file = subsubm.value_of("parameters");
+
                 let batch_size = subsubm
                     .value_of("batch")
                     .unwrap()
                     .parse::<usize>()
                     .expect("Batch size should be an integer");
                 let all = subsubm.is_present("all");
-                run_benchmark_node(committee_config_path, node_config_path, batch_size, all)?;
+                run_benchmark_node(
+                    committee_config_path,
+                    node_config_path,
+                    batch_size,
+                    all,
+                    parameters_file,
+                )?;
             }
             ("client", Some(subsubm)) => {
                 let rate = subsubm
@@ -184,16 +196,21 @@ fn run_benchmark_node(
     node_config_path: &str,
     batch_size: usize,
     all: bool,
+    parameters: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut rt = Builder::new()
-        .threaded_scheduler()
-        .core_threads(16)
-        .max_threads(20)
+    let rt = Builder::new_multi_thread()
+        .worker_threads(16)
         .thread_name("bench-node")
         .thread_stack_size(3 * 1024 * 1024)
         .enable_all()
         .build()
         .unwrap();
+
+    // Load default parameters if none are specified.
+    let parameters = match parameters {
+        Some(filename) => Parameters::read(filename)?,
+        None => Parameters::default(),
+    };
 
     let committee = Committee::read(committee_config_path)?;
     // TODO: Sanitize committee. There should the same number of workers for all
@@ -210,6 +227,15 @@ fn run_benchmark_node(
 
     rt.block_on(async {
         // Run the primary and all workers.
+        let (tx_mempool, rx_mempool) = channel(1000);
+        let (tx, mut rx) = channel(1000);
+
+        tokio::spawn(async move {
+            loop {
+                rx.recv().await;
+            }
+        });
+
         if all {
             // Share one store!
             let store = Store::new(
@@ -227,19 +253,48 @@ fn run_benchmark_node(
                 .await;
             }
             let primary_id = authority.primary.name;
-            let mut primary = ManagePrimary::new(primary_id, secret_key, committee);
+            let mut primary = ManagePrimary::new(
+                primary_id, secret_key, committee, // true,
+                rx_mempool,
+            );
+            Consensus::run(
+                primary.primary_core.id.clone(),
+                primary.primary_core.committee.clone(),
+                parameters,
+                primary.primary_core.signature_channel.clone(),
+                primary.primary_core.store.clone(),
+                tx_mempool,
+                tx,
+            )
+            .await
+            .unwrap();
+
             primary.primary_core.start().await;
 
-        // Run a primary.
+            // Run a primary.
         } else if committee.is_primary(&node_id).unwrap() {
-            let mut primary = ManagePrimary::new(node_id, secret_key, committee);
+            let mut primary = ManagePrimary::new(
+                node_id, secret_key, committee, //true,
+                rx_mempool,
+            );
+            Consensus::run(
+                primary.primary_core.id.clone(),
+                primary.primary_core.committee.clone(),
+                parameters,
+                primary.primary_core.signature_channel.clone(),
+                primary.primary_core.store.clone(),
+                tx_mempool,
+                tx,
+            )
+            .await
+            .unwrap();
             primary.primary_core.start().await;
 
-        // Run a worker.
+            // Run a worker.
         } else {
             let _ = ManageWorker::new(node_id, committee.clone(), batch_size, None).await;
             loop {
-                delay_for(Duration::from_millis(500)).await;
+                sleep(Duration::from_millis(500)).await;
             }
         }
     });
@@ -252,9 +307,8 @@ fn run_benchmark_client(
     rate: u64,
     others: Vec<SocketAddr>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut rt = Builder::new()
-        .threaded_scheduler()
-        .core_threads(1)
+    let rt = Builder::new_multi_thread()
+        .worker_threads(1)
         .thread_name("bench-client")
         .thread_stack_size(3 * 1024 * 1024)
         .enable_all()
@@ -352,7 +406,7 @@ async fn wait(nodes: Vec<SocketAddr>) {
     join_all(nodes.iter().cloned().map(|address| {
         tokio::spawn(async move {
             while TcpStream::connect(address).await.is_err() {
-                delay_for(Duration::from_millis(10)).await;
+                sleep(Duration::from_millis(10)).await;
             }
         })
     }))
