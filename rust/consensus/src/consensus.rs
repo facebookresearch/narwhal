@@ -1,43 +1,20 @@
 use config::{Committee, Stake};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
+use log::warn;
 use primary::{Certificate, Round};
 use std::cmp::max;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 type Dag = HashMap<Round, HashMap<PublicKey, (Digest, Certificate)>>;
 
-/*
-struct State {
-    last_committed: HashMap<PublicKey, Round>,
-    last_committed_leader: Certificate,
-    dag: Dag,
-}
-
-impl State {
-    fn new(genesis: &[Certificate]) -> Self {
-        let genesis = genesis
-            .iter()
-            .cloned()
-            .map(|x| (x.origin, (x.digest(), x)))
-            .collect::<HashMap<_, _>>();
-
-        Self {
-            last_committed: HashMap::new(),
-            last_committed_leader: Certificate::default(),
-            dag: [(0, genesis)].iter().cloned().collect(),
-        }
-    }
-}
-*/
-
 pub struct Consensus {
     committee: Committee,
-    gc_depth: Round,
 
     rx_waiter: Receiver<Certificate>,
-    tx_primary: Sender<Round>,
+    tx_primary: Sender<Certificate>,
+    tx_output: Sender<Certificate>,
 
     last_committed: HashMap<PublicKey, Round>,
     last_committed_leader: Certificate,
@@ -48,9 +25,9 @@ pub struct Consensus {
 impl Consensus {
     pub fn spawn(
         committee: Committee,
-        gc_depth: Round,
         rx_waiter: Receiver<Certificate>,
-        tx_primary: Sender<Round>,
+        tx_primary: Sender<Certificate>,
+        tx_output: Sender<Certificate>,
     ) {
         tokio::spawn(async move {
             let genesis = Certificate::genesis(&committee)
@@ -60,9 +37,9 @@ impl Consensus {
 
             Self {
                 committee,
-                gc_depth,
                 rx_waiter,
                 tx_primary,
+                tx_output,
                 last_committed: HashMap::new(),
                 last_committed_leader: Certificate::default(),
                 dag: [(0, genesis.clone())].iter().cloned().collect(),
@@ -74,8 +51,6 @@ impl Consensus {
     }
 
     async fn run(&mut self) {
-        //let mut state = State::new(&self.genesis);
-
         while let Some(certificate) = self.rx_waiter.recv().await {
             let round = certificate.round;
 
@@ -119,13 +94,15 @@ impl Consensus {
                 let mut sequence = Vec::new();
                 while let Some(leader_certificate) = self.order_leaders(certificate).pop() {
                     // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
-                    let mut ordered = self.order_dag(leader_certificate, &self.last_committed);
+                    let mut ordered = self.order_dag(leader_certificate);
                     while let Some(x) = ordered.pop() {
+                        // Update internal state.
                         self.last_committed
                             .entry(x.origin.clone())
                             .and_modify(|r| *r = max(*r, x.round))
                             .or_insert_with(|| x.round);
 
+                        // Add the certificate to the sequence.
                         sequence.push(x);
                     }
                 }
@@ -133,10 +110,23 @@ impl Consensus {
                 // Update internal state.
                 self.last_committed_leader = certificate.clone();
 
-                let round = self.last_committed_leader.round;
-                if round >= self.gc_depth {
-                    let gc_round = round - self.gc_depth;
-                    self.dag.retain(|r, _| r >= &gc_round);
+                // Clean up the dag.
+                for (name, round) in &self.last_committed {
+                    self.dag.retain(|r, authorities| {
+                        authorities.retain(|n, _| n != name || r >= round);
+                        !authorities.is_empty()
+                    });
+                }
+
+                // Output the sequence in the right order.
+                for certificate in sequence {
+                    self.tx_primary
+                        .send(certificate.clone())
+                        .await
+                        .expect("Failed to send certificate to primary");
+                    if let Err(e) = self.tx_output.send(certificate).await {
+                        warn!("Failed to output certificate: {}", e);
+                    }
                 }
             }
         }
@@ -164,13 +154,9 @@ impl Consensus {
         let mut to_commit = vec![leader_certificate];
         while let Some(previous_leader_certificate) = self.linked_leader(leader_certificate) {
             // Compute the stop condition. We stop ordering leaders when we reached either (1) the last
-            // committed leader, or (2) the genesis, or (3) we past the GC depth.
+            // committed leader, or (2) the genesis.
             let mut stop = &self.last_committed_leader == previous_leader_certificate;
             stop |= self.genesis.contains(previous_leader_certificate);
-            let round = self.last_committed_leader.round;
-            if round >= self.gc_depth {
-                stop |= previous_leader_certificate.round < round - self.gc_depth;
-            }
             if stop {
                 break;
             }
@@ -194,30 +180,22 @@ impl Consensus {
                 None => return None,
             };
 
-        // Gather the children of the previous leader.
-        let children: BTreeSet<_> = self
-            .dag
+        // Gather the children of the previous leader. Return the previous leader's certificate if there is
+        // a path between the two leaders.
+        self.dag
             .get(&(r - 1))
             .expect("We should have the whole history by now")
             .values()
-            .filter(|(_, x)| x.header.parents.contains(&previous_leader_digest))
-            .map(|(digest, _)| digest.clone())
-            .collect();
-
-        // Return the previous leader's certificate if there is a path between the two leaders.
-        match children.is_disjoint(&leader_certificate.header.parents) {
-            true => None,
-            false => Some(&previous_leader_certificate),
-        }
+            .find(|(digest, certificate)| {
+                certificate.header.parents.contains(&previous_leader_digest)
+                    && leader_certificate.header.parents.contains(digest)
+            })
+            .map(|_| previous_leader_certificate)
     }
 
     /// Flatten the dag referenced by the input certificate. This is a classic depth-first search (pre-order):
     /// https://en.wikipedia.org/wiki/Tree_traversal#Pre-order
-    fn order_dag(
-        &self,
-        certificate: &Certificate,
-        last_committed: &HashMap<PublicKey, Round>,
-    ) -> Vec<Certificate> {
+    fn order_dag(&self, certificate: &Certificate) -> Vec<Certificate> {
         let mut ordered = Vec::new();
         let mut already_ordered = HashSet::new();
 
@@ -237,13 +215,12 @@ impl Consensus {
                 // for this authority (to avoid committing twice the same blocks).
                 let mut skip = self.genesis.contains(certificate);
                 skip |= already_ordered.contains(&digest);
-                if let Some(round) = last_committed.get(&certificate.origin) {
+                if let Some(round) = self.last_committed.get(&certificate.origin) {
                     skip |= &certificate.round == round;
                 }
 
                 if !skip {
                     buffer.push(certificate);
-
                     already_ordered.insert(digest);
                 }
             }
