@@ -1,7 +1,7 @@
 use config::{Committee, Stake};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
-use log::{info, warn};
+use log::{debug, info, warn};
 use primary::{Certificate, Round};
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
@@ -28,9 +28,6 @@ pub struct Consensus {
 
     /// The genesis certificates.
     genesis: Vec<Certificate>,
-    /// Keeps the last committed round for each authority. This map is used to clean up the dag and
-    /// ensure we don't commit twice the same certificate.
-    //last_committed: HashMap<PublicKey, Round>,
     /// The representation of the DAG in memory.
     dag: Dag,
 }
@@ -54,7 +51,6 @@ impl Consensus {
                 tx_primary,
                 tx_output,
                 genesis: genesis.iter().map(|(_, (_, x))| x.clone()).collect(),
-                //last_committed: HashMap::new(),
                 dag: [(0, genesis)].iter().cloned().collect(),
             }
             .run()
@@ -68,6 +64,7 @@ impl Consensus {
         let mut last_committed = HashMap::new();
 
         while let Some(certificate) = self.rx_waiter.recv().await {
+            debug!("Processing {:?}", certificate);
             println!("RECEIVED {:?}", certificate);
             let round = certificate.round;
 
@@ -106,57 +103,63 @@ impl Consensus {
             // If it is the case, we can commit the leader. But first, we need to recursively go back to
             // the last committed leader, and commit all preceding leaders in the right order. Committing
             // a leader block means committing all its dependencies.
-            if stake >= self.committee.validity_threshold() {
-                // Get an ordered list of past leaders that are linked to the current leader.
-                let mut sequence = Vec::new();
-                let ordered_leaders = self.order_leaders(certificate, &last_committed);
-                for leader_certificate in ordered_leaders.iter().rev() {
-                    // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
-                    let ordered = self.order_dag(leader_certificate, &last_committed);
-                    for x in ordered.iter().rev() {
-                        // Update internal state.
-                        last_committed
-                            .entry(x.origin.clone())
-                            .and_modify(|r| *r = max(*r, x.round))
-                            .or_insert_with(|| x.round);
+            if stake < self.committee.validity_threshold() {
+                debug!("Leader {:?} does not have enough support", certificate);
+                println!("Leader {:?} does not have enough support", certificate);
+                continue;
+            }
 
-                        for (name, round) in &last_committed {
-                            println!("NEW STATE: {}: {}", name, round);
-                        }
-                        println!();
+            debug!("Leader {:?} has enough support", certificate);
+            println!("Leader {:?} has enough support", certificate);
+            // Get an ordered list of past leaders that are linked to the current leader.
+            let mut sequence = Vec::new();
+            let ordered_leaders = self.order_leaders(certificate, &last_committed);
+            for leader_certificate in ordered_leaders.iter().rev() {
+                // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
+                let ordered = self.order_dag(leader_certificate, &last_committed);
+                for x in ordered.iter().rev() {
+                    // Update internal state.
+                    last_committed
+                        .entry(x.origin.clone())
+                        .and_modify(|r| *r = max(*r, x.round))
+                        .or_insert_with(|| x.round);
 
-                        // Add the certificate to the sequence.
-                        sequence.push(x.clone());
-                    }
+                    // Add the certificate to the sequence.
+                    sequence.push(x.clone());
                 }
 
-                // Clean up the dag.
                 for (name, round) in &last_committed {
-                    self.dag.retain(|r, authorities| {
-                        authorities.retain(|n, _| n != name || r >= round);
-                        !authorities.is_empty()
-                    });
+                    println!("NEW STATE: {}: {}", name, round);
+                }
+                println!();
+            }
+
+            // Clean up the dag.
+            for (name, round) in &last_committed {
+                self.dag.retain(|r, authorities| {
+                    authorities.retain(|n, _| n != name || r >= round);
+                    !authorities.is_empty()
+                });
+            }
+
+            // Output the sequence in the right order.
+            for certificate in sequence {
+                println!("COMMITTED: {:?}", certificate);
+                info!("Committed B{}", certificate.round);
+
+                #[cfg(feature = "benchmark")]
+                for (digest, _) in &certificate.header.payload {
+                    // NOTE: This log entry is used to compute performance.
+                    info!("Committed B{}({:?})", certificate.round, digest);
                 }
 
-                // Output the sequence in the right order.
-                for certificate in sequence {
-                    println!("COMMITTED: {:?}", certificate);
-                    info!("Committed B{}", certificate.round);
+                self.tx_primary
+                    .send(certificate.clone())
+                    .await
+                    .expect("Failed to send certificate to primary");
 
-                    #[cfg(feature = "benchmark")]
-                    for (digest, _) in &certificate.header.payload {
-                        // NOTE: This log entry is used to compute performance.
-                        info!("Committed B{}({:?})", certificate.round, digest);
-                    }
-
-                    self.tx_primary
-                        .send(certificate.clone())
-                        .await
-                        .expect("Failed to send certificate to primary");
-
-                    if let Err(e) = self.tx_output.send(certificate).await {
-                        warn!("Failed to output certificate: {}", e);
-                    }
+                if let Err(e) = self.tx_output.send(certificate).await {
+                    warn!("Failed to output certificate: {}", e);
                 }
             }
         }
@@ -168,6 +171,9 @@ impl Consensus {
         // TODO: We should elect the leader of round r-2 using the common coin revealed at round r.
         // At this stage, we are guaranteed to have 2f+1 certificates from round r (which is enough to
         // compute the coin). We currently just use round-robin.
+        #[cfg(test)]
+        let coin = 0;
+        #[cfg(not(test))]
         let coin = round;
 
         // Elect the leader.
@@ -200,6 +206,10 @@ impl Consensus {
         while let Some(previous_leader_certificate) = self.linked_leader(leader_certificate) {
             // Compute the stop condition. We stop ordering leaders when we reached either the genesis,
             // or (2) the last committed leader.
+            debug!(
+                "Leaders {:?} <- {:?} are linked",
+                previous_leader_certificate, leader_certificate
+            );
             println!(
                 "{:?} AND {:?} ARE LINKED",
                 leader_certificate, previous_leader_certificate
@@ -252,12 +262,14 @@ impl Consensus {
         certificate: &Certificate,
         last_committed: &HashMap<PublicKey, Round>,
     ) -> Vec<Certificate> {
+        debug!("Processing sub-dag of {:?}", certificate);
         println!("ORDERING: {:?}", certificate);
         let mut ordered = Vec::new();
         let mut already_ordered = HashSet::new();
 
         let mut buffer = vec![certificate];
         while let Some(x) = buffer.pop() {
+            debug!("Sequencing {:?}", x);
             println!("ADDING TO STACK: {:?}", x);
             ordered.push(x.clone());
             for parent in &x.header.parents {
