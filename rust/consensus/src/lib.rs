@@ -143,15 +143,14 @@ impl Consensus {
             // Get an ordered list of past leaders that are linked to the current leader.
             let mut sequence = Vec::new();
             let ordered_leaders = self.order_leaders(certificate, &state);
-            for leader_certificate in ordered_leaders.iter().rev() {
+            for leader in ordered_leaders.iter().rev() {
                 // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
-                let ordered = self.order_dag(leader_certificate, &state);
-                for x in ordered.iter().rev() {
+                for x in self.order_dag(leader, &state) {
                     // Update and clean up internal state.
                     state.update(&x);
 
                     // Add the certificate to the sequence.
-                    sequence.push(x.clone());
+                    sequence.push(x);
                 }
             }
 
@@ -198,56 +197,47 @@ impl Consensus {
     }
 
     /// Order the past leaders that are linked to the current leader.
-    fn order_leaders(&self, certificate: &Certificate, state: &State) -> Vec<Certificate> {
-        let mut leader_certificate = certificate;
+    fn order_leaders(&self, leader: &Certificate, state: &State) -> Vec<Certificate> {
+        let mut leader = leader;
 
         // If we already ordered the last leader, there is nothing to do.
         if state
             .last_committed
-            .get(&leader_certificate.origin)
-            .map_or_else(|| false, |r| r == &leader_certificate.round)
+            .get(&leader.origin)
+            .map_or_else(|| false, |r| r == &leader.round)
         {
             return Vec::new();
         }
 
         // If we didn't, we look for all past leaders that we didn't order yet.
-        let mut to_commit = vec![leader_certificate.clone()];
-        while let Some(previous_leader_certificate) =
-            self.linked_leader(leader_certificate, &state.dag)
-        {
+        let mut to_commit = vec![leader.clone()];
+        while let Some(previous_leader) = self.previous_leader(leader, &state.dag) {
             // Compute the stop condition. We stop ordering leaders when we reached either the genesis,
             // or (2) the last committed leader.
-            debug!(
-                "Leaders {:?} <- {:?} are linked",
-                previous_leader_certificate, leader_certificate
-            );
-            let mut stop = self.genesis.contains(previous_leader_certificate);
+            debug!("Leaders {:?} <- {:?} are linked", previous_leader, leader);
+            let mut stop = self.genesis.contains(previous_leader);
             stop |= state
                 .last_committed
-                .get(&previous_leader_certificate.origin)
-                .map_or_else(|| false, |r| r == &previous_leader_certificate.round);
+                .get(&previous_leader.origin)
+                .map_or_else(|| false, |r| r == &previous_leader.round);
 
             if stop {
                 break;
             }
 
-            leader_certificate = previous_leader_certificate;
-            to_commit.push(previous_leader_certificate.clone());
+            leader = previous_leader;
+            to_commit.push(previous_leader.clone());
         }
         to_commit
     }
 
     /// Returns the certificate originated by the previous leader, if it is linked to the input leader.
-    fn linked_leader<'a>(
-        &self,
-        leader_certificate: &Certificate,
-        dag: &'a Dag,
-    ) -> Option<&'a Certificate> {
-        let r = leader_certificate.round;
+    fn previous_leader<'a>(&self, leader: &Certificate, dag: &'a Dag) -> Option<&'a Certificate> {
+        let r = leader.round;
 
         // Get the certificate proposed by the pervious leader.
         let previous_leader_round = r - 2;
-        let (previous_leader_digest, previous_leader_certificate) =
+        let (previous_leader_digest, previous_leader) =
             match self.leader(previous_leader_round, dag) {
                 Some(x) => x,
                 None => return None,
@@ -260,19 +250,19 @@ impl Consensus {
             .values()
             .find(|(digest, certificate)| {
                 certificate.header.parents.contains(&previous_leader_digest)
-                    && leader_certificate.header.parents.contains(digest)
+                    && leader.header.parents.contains(digest)
             })
-            .map(|_| previous_leader_certificate)
+            .map(|_| previous_leader)
     }
 
     /// Flatten the dag referenced by the input certificate. This is a classic depth-first search (pre-order):
     /// https://en.wikipedia.org/wiki/Tree_traversal#Pre-order
-    fn order_dag(&self, leader_certificate: &Certificate, state: &State) -> Vec<Certificate> {
-        debug!("Processing sub-dag of {:?}", leader_certificate);
+    fn order_dag(&self, leader: &Certificate, state: &State) -> Vec<Certificate> {
+        debug!("Processing sub-dag of {:?}", leader);
         let mut ordered = Vec::new();
         let mut already_ordered = HashSet::new();
 
-        let mut buffer = vec![leader_certificate];
+        let mut buffer = vec![leader];
         while let Some(x) = buffer.pop() {
             debug!("Sequencing {:?}", x);
             ordered.push(x.clone());
@@ -305,7 +295,7 @@ impl Consensus {
         }
 
         // Ordering the output by round is not really necessary but it makes the commit sequence prettier.
-        ordered.sort_by(|x, y| y.round.cmp(&x.round));
+        ordered.sort_by_key(|x| x.round);
         ordered
     }
 }

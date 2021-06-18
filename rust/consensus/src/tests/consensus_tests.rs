@@ -78,11 +78,10 @@ fn make_certificates(
     (certificates, next_parents)
 }
 
+// Run for 4 dag rounds in ideal conditions (all nodes reference all other nodes). We should commit
+// the leader of round 2.
 #[tokio::test]
 async fn commit_one() {
-    // Run for 4 dag rounds in ideal conditions (all nodes reference all other nodes). We should
-    // commit the leader of round 2.
-
     // Make certificates for rounds 1 to 4.
     let keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     let genesis = Certificate::genesis(&mock_committee())
@@ -118,11 +117,10 @@ async fn commit_one() {
     assert_eq!(certificate.round, 2);
 }
 
+// Run for 8 dag rounds with one dead node node (that is not a leader). We should commit the leaders of
+// rounds 2, 4, and 6.
 #[tokio::test]
 async fn dead_node() {
-    // Run for 8 dag rounds with one dead node node (that is not a leader). We should commit
-    // the leaders of rounds 2, 4, and 6.
-
     // Make the certificates.
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     keys.sort(); // Ensure we don't remove one of the leaders.
@@ -159,11 +157,10 @@ async fn dead_node() {
     assert_eq!(certificate.round, 6);
 }
 
+// Run for 6 dag rounds. The leaders of round 2 does not have enough support, but the leader of
+// round 4 does. The leader of rounds 2 and 4 should thus be committed upon entering round 6.
 #[tokio::test]
 async fn not_enough_support() {
-    // Run for 6 dag rounds. The leaders of round 2 does not have enough support, but the leader of
-    // round 4 does. The leader of rounds 2 and 4 should thus be committed upon entering round 6.
-
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     keys.sort();
 
@@ -248,11 +245,10 @@ async fn not_enough_support() {
     assert_eq!(certificate.round, 4);
 }
 
+// Run for 6 dag rounds. Node 0 (the leader of round 2) is missing for rounds 1 and 2,
+// and reapers from round 3.
 #[tokio::test]
 async fn missing_leader() {
-    // Run for 6 dag rounds. Node 0 (the leader of round 2) is missing for rounds 1 and 2,
-    // and reapers from round 3.
-
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     keys.sort();
 
