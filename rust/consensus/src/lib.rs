@@ -72,7 +72,6 @@ impl Consensus {
 
         while let Some(certificate) = self.rx_waiter.recv().await {
             debug!("Processing {:?}", certificate);
-            println!("RECEIVED {:?}", certificate);
             let round = certificate.round;
 
             // Add the new certificate to the local storage.
@@ -110,12 +109,10 @@ impl Consensus {
             // a leader block means committing all its dependencies.
             if stake < self.committee.validity_threshold() {
                 debug!("Leader {:?} does not have enough support", certificate);
-                println!("Leader {:?} does not have enough support", certificate);
                 continue;
             }
 
             debug!("Leader {:?} has enough support", certificate);
-            println!("Leader {:?} has enough support", certificate);
             // Get an ordered list of past leaders that are linked to the current leader.
             let mut sequence = Vec::new();
             let ordered_leaders = self.order_leaders(certificate, &last_committed, &dag);
@@ -139,18 +136,12 @@ impl Consensus {
                     // Add the certificate to the sequence.
                     sequence.push(x.clone());
                 }
-
-                for (name, round) in &last_committed {
-                    println!("NEW STATE: {}: {}", name, round);
-                }
-                println!();
             }
 
             // Clean up the dag.
 
             // Output the sequence in the right order.
             for certificate in sequence {
-                println!("COMMITTED: {:?}", certificate);
                 info!("Committed B{}", certificate.round);
 
                 #[cfg(feature = "benchmark")]
@@ -217,10 +208,6 @@ impl Consensus {
                 "Leaders {:?} <- {:?} are linked",
                 previous_leader_certificate, leader_certificate
             );
-            println!(
-                "{:?} AND {:?} ARE LINKED",
-                leader_certificate, previous_leader_certificate
-            );
             let mut stop = self.genesis.contains(previous_leader_certificate);
             stop |= last_committed
                 .get(&previous_leader_certificate.origin)
@@ -233,7 +220,6 @@ impl Consensus {
             leader_certificate = previous_leader_certificate;
             to_commit.push(previous_leader_certificate.clone());
         }
-        println!("ORDER LEADERS DONE: {:?}", to_commit);
         to_commit
     }
 
@@ -274,14 +260,12 @@ impl Consensus {
         dag: &Dag,
     ) -> Vec<Certificate> {
         debug!("Processing sub-dag of {:?}", certificate);
-        println!("ORDERING: {:?}", certificate);
         let mut ordered = Vec::new();
         let mut already_ordered = HashSet::new();
 
         let mut buffer = vec![certificate];
         while let Some(x) = buffer.pop() {
             debug!("Sequencing {:?}", x);
-            println!("ADDING TO STACK: {:?}", x);
             ordered.push(x.clone());
             for parent in &x.header.parents {
                 let (digest, certificate) = match dag
@@ -310,7 +294,6 @@ impl Consensus {
         }
 
         // Ordering the output by round is not really necessary but it makes the commit sequence prettier.
-        println!("ORDER SUB DAG DONE");
         ordered.sort_by(|x, y| y.round.cmp(&x.round));
         ordered
     }

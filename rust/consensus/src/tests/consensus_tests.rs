@@ -53,53 +53,46 @@ fn mock_certificate(
     (certificate.digest(), certificate)
 }
 
-/*
-fn certificates(start: Round, stop: Round) -> Vec<Certificate> {
-    let mut certificates = Vec::new();
-    let mut parents = Certificate::genesis(&mock_committee())
-        .iter()
-        .map(|x| x.digest())
-        .collect::<BTreeSet<_>>();
-
-    for round in start..stop {
-        let mut next_parents = BTreeSet::new();
-        for (name, _) in &keys {
-            let (digest, certificate) = mock_certificate(name.clone(), round, parents.clone());
-            certificates.push(certificate);
-            next_parents.insert(digest);
-        }
-        parents = next_parents;
-    }
-    certificates
-}
-*/
-
-#[tokio::test]
-async fn commit_one() {
-    // Run for 4 dag rounds in ideal conditions (all nodes reference all other nodes). We should 
-    // commit the leader of round 2.
-
-    let keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
-
+// Creates one certificate per authority starting and finishing at the specified rounds (inclusive).
+// Outputs a VecDeque of certificates (the certificate with higher round is on the front) and a set
+// of digests to be used as parents for the certificates of the next round.
+fn make_certificates(
+    start: Round,
+    stop: Round,
+    initial_parents: &BTreeSet<Digest>,
+    keys: &Vec<PublicKey>,
+) -> (VecDeque<Certificate>, BTreeSet<Digest>) {
     let mut certificates = VecDeque::new();
-    let mut parents = Certificate::genesis(&mock_committee())
-        .iter()
-        .map(|x| x.digest())
-        .collect::<BTreeSet<_>>();
+    let mut parents = initial_parents.iter().cloned().collect::<BTreeSet<_>>();
+    let mut next_parents = BTreeSet::new();
 
-    // Make certificates for rounds 1 to 4.
-    for round in 1..=4 {
-        let mut next_parents = BTreeSet::new();
-        for name in &keys {
+    for round in start..=stop {
+        next_parents.clear();
+        for name in keys {
             let (digest, certificate) = mock_certificate(*name, round, parents.clone());
             certificates.push_back(certificate);
             next_parents.insert(digest);
         }
-        parents = next_parents;
+        parents = next_parents.clone();
     }
+    (certificates, next_parents)
+}
+
+#[tokio::test]
+async fn commit_one() {
+    // Run for 4 dag rounds in ideal conditions (all nodes reference all other nodes). We should
+    // commit the leader of round 2.
+
+    // Make certificates for rounds 1 to 4.
+    let keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
+    let genesis = Certificate::genesis(&mock_committee())
+        .iter()
+        .map(|x| x.digest())
+        .collect::<BTreeSet<_>>();
+    let (mut certificates, next_parents) = make_certificates(1, 4, &genesis, &keys);
 
     // Make one certificate with round 5 to trigger the commits.
-    let (_, certificate) = mock_certificate(keys[0], 5, parents.clone());
+    let (_, certificate) = mock_certificate(keys[0], 5, next_parents);
     certificates.push_back(certificate);
 
     // Spawn the consensus engine and sink the primary channel.
@@ -126,31 +119,21 @@ async fn commit_one() {
 }
 
 #[tokio::test]
-async fn permanent_dead_node() {
-    // Run for 8 dag rounds with one dead node node (that is not a leader). We should commit 
+async fn dead_node() {
+    // Run for 8 dag rounds with one dead node node (that is not a leader). We should commit
     // the leaders of rounds 2, 4, and 6.
 
+    // Make the certificates.
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     keys.sort(); // Ensure we don't remove one of the leaders.
     let _ = keys.pop().unwrap();
 
-    let mut certificates = VecDeque::new();
-    let mut parents = Certificate::genesis(&mock_committee())
+    let genesis = Certificate::genesis(&mock_committee())
         .iter()
         .map(|x| x.digest())
         .collect::<BTreeSet<_>>();
-    let mut next_parents = BTreeSet::new();
 
-    // Make the certificates.
-    for round in 1..=9 {
-        next_parents.clear();
-        for name in &keys {
-            let (digest, certificate) = mock_certificate(*name, round, parents.clone());
-            certificates.push_back(certificate);
-            next_parents.insert(digest);
-        }
-        parents = next_parents.clone();
-    }
+    let (mut certificates, _) = make_certificates(1, 9, &genesis, &keys);
 
     // Spawn the consensus engine and sink the primary channel.
     let (tx_waiter, rx_waiter) = channel(1);
@@ -184,36 +167,29 @@ async fn not_enough_support() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     keys.sort();
 
-    let mut certificates = VecDeque::new();
-    let mut parents = Certificate::genesis(&mock_committee())
+    let genesis = Certificate::genesis(&mock_committee())
         .iter()
         .map(|x| x.digest())
         .collect::<BTreeSet<_>>();
-    let mut next_parents = BTreeSet::new();
+
+    let mut certificates = VecDeque::new();
 
     // Round 1: Fully connected graph.
-    for name in keys.iter().take(3) {
-        let (digest, certificate) = mock_certificate(*name, 1, parents.clone());
-        certificates.push_back(certificate);
-        next_parents.insert(digest);
-    }
-    parents = next_parents.clone();
+    let nodes = keys.iter().cloned().take(3).collect();
+    let (out, parents) = make_certificates(1, 1, &genesis, &nodes);
+    certificates.extend(out);
 
     // Round 2: Fully connect graph. But remember the digest of the leader. Note that this
     // round is the only one with 4 certificates.
     let (leader_2_digest, certificate) = mock_certificate(keys[0], 2, parents.clone());
     certificates.push_back(certificate);
 
-    next_parents.clear();
-    for name in keys.iter().skip(1) {
-        let (digest, certificate) = mock_certificate(*name, 2, parents.clone());
-        certificates.push_back(certificate);
-        next_parents.insert(digest);
-    }
-    parents = next_parents.clone();
+    let nodes = keys.iter().cloned().skip(1).collect();
+    let (out, mut parents) = make_certificates(2, 2, &parents, &nodes);
+    certificates.extend(out);
 
     // Round 3: Only node 0 links to the leader of round 2.
-    next_parents.clear();
+    let mut next_parents = BTreeSet::new();
 
     let name = &keys[1];
     let (digest, certificate) = mock_certificate(*name, 3, parents.clone());
@@ -234,18 +210,12 @@ async fn not_enough_support() {
     parents = next_parents.clone();
 
     // Rounds 4, 5, and 6: Fully connected graph.
-    for r in [4, 5, 6] {
-        next_parents.clear();
-        for name in keys.iter().take(3) {
-            let (digest, certificate) = mock_certificate(*name, r, parents.clone());
-            certificates.push_back(certificate);
-            next_parents.insert(digest);
-        }
-        parents = next_parents.clone();
-    }
+    let nodes = keys.iter().cloned().take(3).collect();
+    let (out, parents) = make_certificates(4, 6, &parents, &nodes);
+    certificates.extend(out);
 
     // Round 7: Send a single certificate to trigger the commits.
-    let (_, certificate) = mock_certificate(keys[0], 7, parents.clone());
+    let (_, certificate) = mock_certificate(keys[0], 7, parents);
     certificates.push_back(certificate);
 
     // Spawn the consensus engine and sink the primary channel.
@@ -286,36 +256,21 @@ async fn missing_leader() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     keys.sort();
 
-    let mut certificates = VecDeque::new();
-    let mut parents = Certificate::genesis(&mock_committee())
+    let genesis = Certificate::genesis(&mock_committee())
         .iter()
         .map(|x| x.digest())
         .collect::<BTreeSet<_>>();
-    let mut next_parents = BTreeSet::new();
+
+    let mut certificates = VecDeque::new();
 
     // Remove the leader for rounds 1 and 2.
-    let node_0 = keys.remove(0);
-    for round in 1..=2 {
-        next_parents.clear();
-        for name in &keys {
-            let (digest, certificate) = mock_certificate(*name, round, parents.clone());
-            certificates.push_back(certificate);
-            next_parents.insert(digest);
-        }
-        parents = next_parents.clone();
-    }
+    let nodes = keys.iter().cloned().skip(1).collect();
+    let (out, parents) = make_certificates(1, 2, &genesis, &nodes);
+    certificates.extend(out);
 
     // Add back the leader for rounds 3, 4, 5 and 6.
-    keys.insert(0, node_0);
-    for round in 3..=5 {
-        next_parents.clear();
-        for name in &keys {
-            let (digest, certificate) = mock_certificate(*name, round, parents.clone());
-            certificates.push_back(certificate);
-            next_parents.insert(digest);
-        }
-        parents = next_parents.clone();
-    }
+    let (out, parents) = make_certificates(3, 6, &parents, &keys);
+    certificates.extend(out);
 
     // Add a certificate of round 7 to commit the leader of round 4.
     let (_, certificate) = mock_certificate(keys[0], 7, parents.clone());
