@@ -29,5 +29,5 @@ mod sync_driver;
 pub mod sync_server;
 pub mod types;
 
-pub use crate::messages::Certificate;
+pub use crate::messages::{Certificate, Header};
 pub use crate::primary::{Primary, PrimaryWorkerMessage, Round, WorkerPrimaryMessage};

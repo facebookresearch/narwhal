@@ -11,3 +11,9 @@ log = "0.4.14"
 crypto = { path = "../crypto" }
 config = { path = "../config" }
 primary = { path = "../primary" }
+
+[dev-dependencies]
+rand = "0.7.3"
+
+[features]
+benchmark = []

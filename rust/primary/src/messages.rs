@@ -223,7 +223,7 @@ impl Hash for Certificate {
 
 impl fmt::Debug for Certificate {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "C({}, {})", self.header.id, self.round)
+        write!(f, "C({}, {}, {})", self.origin, self.round, self.header.id)
     }
 }
 

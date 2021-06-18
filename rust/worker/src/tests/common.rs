@@ -8,7 +8,7 @@ use ed25519_dalek::Sha512;
 use futures::sink::SinkExt as _;
 use futures::stream::StreamExt as _;
 use rand::rngs::StdRng;
-use rand::SeedableRng;
+use rand::SeedableRng as _;
 use std::convert::TryInto;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
