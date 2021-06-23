@@ -101,10 +101,15 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
                 committee.clone(),
                 parameters,
                 store,
-                tx_new_certificates,
-                rx_feedback,
+                /* tx_consensus */ tx_new_certificates,
+                /* rx_consensus */ rx_feedback,
             );
-            Consensus::spawn(committee, rx_new_certificates, tx_feedback, tx_output);
+            Consensus::spawn(
+                committee,
+                /* rx_waiter */ rx_new_certificates,
+                /* tx_primary */ tx_feedback,
+                tx_output,
+            );
         }
 
         // Spawn a single worker.

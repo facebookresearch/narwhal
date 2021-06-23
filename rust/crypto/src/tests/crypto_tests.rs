@@ -18,7 +18,7 @@ impl PartialEq for SecretKey {
 
 impl fmt::Debug for SecretKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", self.to_base64())
+        write!(f, "{}", self.encode_base64())
     }
 }
 
@@ -30,8 +30,8 @@ pub fn keys() -> Vec<(PublicKey, SecretKey)> {
 #[test]
 fn import_export_public_key() {
     let (public_key, _) = keys().pop().unwrap();
-    let export = public_key.to_base64();
-    let import = PublicKey::from_base64(&export);
+    let export = public_key.encode_base64();
+    let import = PublicKey::decode_base64(&export);
     assert!(import.is_ok());
     assert_eq!(import.unwrap(), public_key);
 }
@@ -39,8 +39,8 @@ fn import_export_public_key() {
 #[test]
 fn import_export_secret_key() {
     let (_, secret_key) = keys().pop().unwrap();
-    let export = secret_key.to_base64();
-    let import = SecretKey::from_base64(&export);
+    let export = secret_key.encode_base64();
+    let import = SecretKey::decode_base64(&export);
     assert!(import.is_ok());
     assert_eq!(import.unwrap(), secret_key);
 }

@@ -132,7 +132,7 @@ impl Primary {
 
         // The `Core` receives and handles headers, votes, and certificates from the other primaries.
         Core::spawn(
-            name.clone(),
+            name,
             committee.clone(),
             store.clone(),
             synchronizer,
@@ -157,10 +157,10 @@ impl Primary {
         // batch digests, it commands the `HeaderWaiter` to synchronizer with other nodes, wait for their reply, and
         // re-schedule execution of the header once we have all missing data.
         HeaderWaiter::spawn(
-            name.clone(),
+            name,
             committee.clone(),
             store.clone(),
-            consensus_round.clone(),
+            consensus_round,
             parameters.gc_depth,
             parameters.sync_retry_delay,
             parameters.sync_retry_nodes,
@@ -179,8 +179,8 @@ impl Primary {
         // When the `Core` collects enough parent certificates, the `Proposer` generates a new header with new batch
         // digests from our workers and it back to the `Core`.
         Proposer::spawn(
-            name.clone(),
-            signature_service.clone(),
+            name,
+            signature_service,
             parameters.header_size,
             parameters.max_header_delay,
             /* rx_core */ rx_parents,
@@ -189,7 +189,7 @@ impl Primary {
         );
 
         // The `Helper` is dedicated to reply to certificates requests from other primaries.
-        Helper::spawn(committee.clone(), store.clone(), rx_cert_requests);
+        Helper::spawn(committee.clone(), store, rx_cert_requests);
 
         info!(
             "Primary {} successfully booted on {}",
@@ -223,7 +223,7 @@ impl MessageHandler for PrimaryReceiverHandler {
                 .send((missing, requestor))
                 .await
                 .expect("Failed to send primary message"),
-            request @ _ => self
+            request => self
                 .tx_primary_messages
                 .send(request)
                 .await

@@ -236,3 +236,9 @@ impl KeyPair {
         Self { name, secret }
     }
 }
+
+impl Default for KeyPair {
+    fn default() -> Self {
+        Self::new()
+    }
+}

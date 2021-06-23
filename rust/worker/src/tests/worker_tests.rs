@@ -10,7 +10,7 @@ async fn handle_clients_transactions() {
     let id = 0;
     let committee = committee_with_base_port(11_000);
     let parameters = Parameters {
-        max_batch_size: 200, // Set a small batch size.
+        batch_size: 200, // Two transactions.
         ..Parameters::default()
     };
 
@@ -24,7 +24,7 @@ async fn handle_clients_transactions() {
 
     // Spawn a network listener to receive our batch's digest.
     let primary_address = committee.primary(&name).unwrap().worker_to_primary;
-    let expected = bincode::serialize(&WorkerPrimaryMessage::OwnBatch(id, batch_digest())).unwrap();
+    let expected = bincode::serialize(&WorkerPrimaryMessage::OwnBatch(batch_digest(), id)).unwrap();
     let handle = listener(primary_address, Some(Bytes::from(expected)));
 
     // Spawn enough workers' listeners to acknowledge our batches.

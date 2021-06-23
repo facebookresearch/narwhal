@@ -96,7 +96,7 @@ impl Proposer {
             let enough_parents = !self.last_parents.is_empty();
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
-            if (enough_parents && enough_digests) || (enough_parents && timer_expired) {
+            if (timer_expired || enough_digests) && enough_parents {
                 // Make a new header.
                 self.make_header().await;
 
