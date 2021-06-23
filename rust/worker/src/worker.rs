@@ -179,7 +179,6 @@ impl Worker {
         // The `Processor` hashes and stores the batch. It then forwards the batch's digest to the `PrimaryConnector`
         // that will send it to our primary machine.
         Processor::spawn(
-            self.name,
             self.id,
             self.store.clone(),
             /* rx_batch */ rx_processor,
@@ -225,7 +224,6 @@ impl Worker {
         // This `Processor` hashes and stores the batches we receive from the other workers. It then forwards the
         // batch's digest to the `PrimaryConnector` that will send it to our primary.
         Processor::spawn(
-            self.name,
             self.id,
             self.store.clone(),
             /* rx_batch */ rx_processor,
