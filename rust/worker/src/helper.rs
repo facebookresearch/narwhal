@@ -46,7 +46,7 @@ impl Helper {
 
     async fn run(&mut self) {
         while let Some((digests, origin)) = self.rx_request.recv().await {
-            // TODO [issue #195]: Do some accounting to prevent bad nodes from monopolizing our resources.
+            // TODO [issue #7]: Do some accounting to prevent bad nodes from monopolizing our resources.
 
             // get the requestors address.
             let address = match self.committee.worker(&origin, &self.id) {

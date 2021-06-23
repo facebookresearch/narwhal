@@ -267,6 +267,8 @@ struct GarbageCollector;
 impl GarbageCollector {
     pub fn spawn(consensus_round: Arc<AtomicU64>, mut rx_consensus: Receiver<Certificate>) {
         tokio::spawn(async move {
+            // TODO [issue #9]: Re-include batch digests that have not been sequenced.
+
             while let Some(certificate) = rx_consensus.recv().await {
                 consensus_round.store(certificate.round, Ordering::Relaxed);
             }

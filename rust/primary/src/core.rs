@@ -162,6 +162,13 @@ impl Core {
             DagError::HeaderRequiresQuorum(header.id.clone())
         );
 
+        // Ensure we have the payload. If we don't, the synchronizer will ask our workers to get it, and then
+        // reschedule processing of this header once we have it.
+        if self.synchronizer.missing_payload(header).await? {
+            debug!("Processing of {} suspended: missing payload", header);
+            return Ok(());
+        }
+
         // Store the header.
         let bytes = bincode::serialize(header).expect("Failed to serialize header");
         self.store.write(header.id.to_vec(), bytes).await;
@@ -193,27 +200,6 @@ impl Core {
             }
         }
         Ok(())
-    }
-
-    async fn handle_header(&mut self, header: &Header) -> DagResult<()> {
-        if self.gc_round > header.round {
-            return Ok(());
-        }
-
-        // TODO [issue #202]: Prevent bad nodes from sending junk headers with high round numbers.
-
-        // Verify the header's signature.
-        header.verify(&self.committee)?;
-
-        // Ensure we have the payload. If we don't, the synchronizer will ask our workers to get it, and then
-        // reschedule processing of this header once we have it.
-        if self.synchronizer.missing_payload(header).await? {
-            debug!("Processing of {} suspended: missing payload", header);
-            return Ok(());
-        }
-
-        // Process the header if all checks pass.
-        self.process_header(header).await
     }
 
     #[async_recursion]
@@ -249,26 +235,6 @@ impl Core {
         Ok(())
     }
 
-    async fn handle_vote(&mut self, vote: Vote) -> DagResult<()> {
-        if self.current_header.round > vote.round {
-            return Ok(());
-        }
-
-        // Ensure we receive a vote on the expected header.
-        ensure!(
-            vote.id == self.current_header.id
-                && vote.origin == self.name
-                && vote.round == self.current_header.round,
-            DagError::UnexpectedVote(vote.id)
-        );
-
-        // Verify the vote.
-        vote.verify(&self.committee)?;
-
-        // Process the vote if all checks pass.
-        self.process_vote(vote).await
-    }
-
     #[async_recursion]
     async fn process_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
         debug!("Processing {:?}", certificate);
@@ -283,7 +249,7 @@ impl Core {
             .map_or_else(|| false, |x| x.contains(&certificate.header.id))
         {
             // This function may still throw an error if the storage fails.
-            self.handle_header(&certificate.header).await?;
+            self.process_header(&certificate.header).await?;
         }
 
         // Ensure we have all the ancestors of this certificate yet. If we don't, the synchronizer will gather
@@ -325,16 +291,47 @@ impl Core {
         Ok(())
     }
 
-    async fn handle_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
+    fn sanitize_header(&mut self, header: &Header) -> DagResult<()> {
+        if self.gc_round > header.round {
+            return Ok(());
+        }
+
+        // Verify the header's signature.
+        header.verify(&self.committee)?;
+
+        // TODO [issue #3]: Prevent bad nodes from sending junk headers with high round numbers.
+
+        Ok(())
+    }
+
+    fn sanitize_vote(&mut self, vote: &Vote) -> DagResult<()> {
+        if self.current_header.round > vote.round {
+            return Ok(());
+        }
+
+        // Ensure we receive a vote on the expected header.
+        ensure!(
+            vote.id == self.current_header.id
+                && vote.origin == self.name
+                && vote.round == self.current_header.round,
+            DagError::UnexpectedVote(vote.id.clone())
+        );
+
+        // Verify the vote.
+        vote.verify(&self.committee)?;
+
+        Ok(())
+    }
+
+    fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
         if self.gc_round > certificate.round {
             return Ok(());
         }
 
-        // Verify the certificate.
+        // Verify the certificate (and the embedded header).
         certificate.verify(&self.committee)?;
 
-        // Process the certificate if all checks pass.
-        self.process_certificate(certificate).await
+        Ok(())
     }
 
     // Main loop listening to incoming messages.
@@ -344,9 +341,25 @@ impl Core {
                 // We receive here messages from other primaries.
                 Some(message) = self.rx_primaries.recv() => {
                     match message {
-                        PrimaryMessage::Header(header) => self.process_header(&header).await,
-                        PrimaryMessage::Vote(vote) => self.handle_vote(vote).await,
-                        PrimaryMessage::Certificate(certificate) => self.handle_certificate(certificate).await,
+                        PrimaryMessage::Header(header) => {
+                            match self.sanitize_header(&header) {
+                                Ok(()) => self.process_header(&header).await,
+                                error => error
+                            }
+
+                        },
+                        PrimaryMessage::Vote(vote) => {
+                            match self.sanitize_vote(&vote) {
+                                Ok(()) => self.process_vote(vote).await,
+                                error => error
+                            }
+                        },
+                        PrimaryMessage::Certificate(certificate) => {
+                            match self.sanitize_certificate(&certificate) {
+                                Ok(()) =>  self.process_certificate(certificate).await,
+                                error => error
+                            }
+                        },
                         _ => panic!("Unexpected core message")
                     }
                 },
