@@ -1,16 +1,17 @@
 use anyhow::{Context, Result};
-use clap::{crate_name, crate_version, App, AppSettings, SubCommand};
+use clap::{crate_name, crate_version, App, AppSettings, ArgMatches, SubCommand};
 use config::Export as _;
 use config::Import as _;
 use config::{Committee, KeyPair, Parameters, WorkerId};
 use consensus::Consensus;
-use crypto::PublicKey;
 use env_logger::Env;
-use std::convert::TryInto;
+use primary::{Certificate, Primary};
 use store::Store;
-use tokio::sync::mpsc::channel;
-use tokio::time::{sleep, Duration};
+use tokio::sync::mpsc::{channel, Receiver};
 use worker::Worker;
+
+/// The default channel capacity.
+pub const CHANNEL_CAPACITY: usize = 1_000;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,139 +55,80 @@ async fn main() -> Result<()> {
     logger.init();
 
     match matches.subcommand() {
-        ("generate_keys", Some(subm)) => {
-            let filename = subm.value_of("filename").unwrap();
-            KeyPair::new()
-                .export(filename)
-                .context("Failed to generate key pair")?;
-        }
-        ("run", Some(subm)) => {
-            let key_file = subm.value_of("keys").unwrap();
-            let committee_file = subm.value_of("committee").unwrap();
-            let parameters_file = subm.value_of("parameters");
-            let store_path = subm.value_of("store").unwrap();
-
-            // Read the committee and node's keypair from file.
-            let keypair = KeyPair::import(key_file).context("Failed to load the node's keypair")?;
-            let committee = Committee::import(committee_file)
-                .context("Failed to load the committee information")?;
-
-            // Load default parameters if none are specified.
-            let parameters = match parameters_file {
-                Some(filename) => {
-                    Parameters::import(filename).context("Failed to load the node's parameters")?
-                }
-                None => Parameters::default(),
-            };
-
-            // Make the data store.
-            let store = Store::new(store_path).context("Failed to create a store")?;
-
-            // Check whether to run a primary, a worker, or an entire authority.
-            match subm.subcommand() {
-                ("primary", _) => run_primary(keypair, committee, parameters, store)
-                    .context("Failed to spawn primary")?,
-                ("worker", Some(subsubm)) => {
-                    let id = subsubm
-                        .value_of("id")
-                        .unwrap()
-                        .parse::<WorkerId>()
-                        .context("The worker id must be a positive integer")?;
-                    Worker::spawn(keypair.name, id, committee, parameters, store);
-                }
-                _ => unreachable!(),
-            }
-
-            // TODO: prevent from terminating in a better way....
-            loop {
-                sleep(Duration::from_millis(60_000)).await;
-            }
-        }
+        ("generate_keys", Some(sub_matches)) => KeyPair::new()
+            .export(sub_matches.value_of("filename").unwrap())
+            .context("Failed to generate key pair")?,
+        ("run", Some(sub_matches)) => run(sub_matches).await?,
         _ => unreachable!(),
     }
     Ok(())
 }
 
-/// Spawn a single primary.
-fn run_primary(
-    keypair: KeyPair,
-    committee: Committee,
-    _parameters: Parameters,
-    _store: Store,
-) -> Result<()> {
-    let name = keypair.name;
-    let secret_key = keypair.secret;
+// Runs either a worker or a primary.
+async fn run(matches: &ArgMatches<'_>) -> Result<()> {
+    let key_file = matches.value_of("keys").unwrap();
+    let committee_file = matches.value_of("committee").unwrap();
+    let parameters_file = matches.value_of("parameters");
+    let store_path = matches.value_of("store").unwrap();
 
-    // Adapt the committee to the old primary.
-    // TODO: Adapt to cleaned up primary.
-    let old_committee = primary::committee::Committee {
-        authorities: committee
-            .authorities
-            .into_iter()
-            .map(|(name, authority)| {
-                let primary = primary::committee::Machine {
-                    name,
-                    host: authority.primary.worker_to_primary.ip().to_string(),
-                    port: authority.primary.worker_to_primary.port(),
-                };
-                let workers: Vec<(_, _)> = authority
-                    .workers
-                    .into_iter()
-                    .map(|(shard_id, addresses)| {
-                        let mut id = [0u8; 32];
-                        for (i, byte) in shard_id.to_le_bytes().iter().enumerate() {
-                            id[i] = *byte;
-                        }
-                        let machine = primary::committee::Machine {
-                            name: PublicKey(
-                                name.0
-                                    .iter()
-                                    .zip(id.iter())
-                                    .map(|(x, y)| x ^ y)
-                                    .collect::<Vec<_>>()
-                                    .try_into()
-                                    .unwrap(),
-                            ),
-                            host: addresses.primary_to_worker.ip().to_string(),
-                            port: addresses.primary_to_worker.port(),
-                        };
-                        (shard_id, machine)
-                    })
-                    .collect();
-                let stake = authority.stake as usize;
-                primary::committee::Authority {
-                    primary,
-                    workers,
-                    stake,
-                }
-            })
-            .collect(),
-        instance_id: 100,
+    // Read the committee and node's keypair from file.
+    let keypair = KeyPair::import(key_file).context("Failed to load the node's keypair")?;
+    let committee =
+        Committee::import(committee_file).context("Failed to load the committee information")?;
+
+    // Load default parameters if none are specified.
+    let parameters = match parameters_file {
+        Some(filename) => {
+            Parameters::import(filename).context("Failed to load the node's parameters")?
+        }
+        None => Parameters::default(),
     };
 
-    // Spawn the consensus core.
-    let (tx_consensus_receiving, rx_consensus_receiving) = channel(1000);
-    let (tx_consensus_sending, rx_consensus_sending) = channel(1000);
-    let mut consensus = Consensus::new(
-        tx_consensus_sending,
-        rx_consensus_receiving,
-        old_committee.clone(),
-    );
-    tokio::spawn(async move {
-        consensus.start().await;
-    });
+    // Make the data store.
+    let store = Store::new(store_path).context("Failed to create a store")?;
 
-    // Spawn the primary core.
-    let mut primary = primary::manage_primary::ManagePrimary::new(
-        name,
-        secret_key,
-        old_committee,
-        tx_consensus_receiving,
-        rx_consensus_sending,
-    );
-    tokio::spawn(async move {
-        primary.primary_core.start().await;
-    });
+    // Channels the sequence of certificates.
+    let (tx_output, rx_output) = channel(CHANNEL_CAPACITY);
 
-    Ok(())
+    // Check whether to run a primary, a worker, or an entire authority.
+    match matches.subcommand() {
+        // Spawn the primary and consensus core.
+        ("primary", _) => {
+            let (tx_new_certificates, rx_new_certificates) = channel(CHANNEL_CAPACITY);
+            let (tx_feedback, rx_feedback) = channel(CHANNEL_CAPACITY);
+            Primary::spawn(
+                keypair,
+                committee.clone(),
+                parameters,
+                store,
+                tx_new_certificates,
+                rx_feedback,
+            );
+            Consensus::spawn(committee, rx_new_certificates, tx_feedback, tx_output);
+        }
+
+        // Spawn a single worker.
+        ("worker", Some(sub_matches)) => {
+            let id = sub_matches
+                .value_of("id")
+                .unwrap()
+                .parse::<WorkerId>()
+                .context("The worker id must be a positive integer")?;
+            Worker::spawn(keypair.name, id, committee, parameters, store);
+        }
+        _ => unreachable!(),
+    }
+
+    // Analyze the consensus' output.
+    analyze(rx_output).await;
+
+    // If this expression is reached, the program ends and all other tasks terminate.
+    unreachable!();
+}
+
+/// Receives an ordered list of certificates and apply any application-specific logic.
+async fn analyze(mut rx_output: Receiver<Certificate>) {
+    while let Some(_certificate) = rx_output.recv().await {
+        // NOTE: Here goes the application logic.
+    }
 }

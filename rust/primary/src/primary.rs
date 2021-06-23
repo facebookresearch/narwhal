@@ -8,8 +8,8 @@ use crate::proposer::Proposer;
 use crate::synchronizer::Synchronizer;
 use async_trait::async_trait;
 use bytes::Bytes;
-use config::{Committee, Parameters, WorkerId};
-use crypto::{Digest, PublicKey, SecretKey, SignatureService};
+use config::{Committee, KeyPair, Parameters, WorkerId};
+use crypto::{Digest, PublicKey, SignatureService};
 use futures::sink::SinkExt as _;
 use log::info;
 use network::{MessageHandler, Receiver as NetworkReceiver, Writer};
@@ -20,7 +20,7 @@ use std::sync::Arc;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-/// The default channel capacity for each channel of the worker.
+/// The default channel capacity for each channel of the primary.
 pub const CHANNEL_CAPACITY: usize = 1_000;
 
 /// The round number.
@@ -56,8 +56,7 @@ pub struct Primary;
 
 impl Primary {
     pub fn spawn(
-        name: PublicKey,
-        secret: SecretKey,
+        keypair: KeyPair,
         committee: Committee,
         parameters: Parameters,
         store: Store,
@@ -74,6 +73,10 @@ impl Primary {
         let (tx_certificates_loopback, rx_certificates_loopback) = channel(CHANNEL_CAPACITY);
         let (tx_primary_messages, rx_primary_messages) = channel(CHANNEL_CAPACITY);
         let (tx_cert_requests, rx_cert_requests) = channel(CHANNEL_CAPACITY);
+
+        // Parse the public and secret key of this authority.
+        let name = keypair.name;
+        let secret = keypair.secret;
 
         // Atomic variable use to synchronizer all tasks with the latest consensus round. This is only
         // used for cleanup. The only tasks that write into this variable is `GarbageCollector`.
