@@ -97,45 +97,30 @@ class LogParser:
         tmp = [(d, self._to_posix(t)) for t, d in tmp]
         commits = self._merge_results([tmp])
 
-        # TODO: Print configs.
-        configs = {}
-        '''
         configs = {
-            'consensus': {
-                'timeout_delay': int(
-                    search(r'Consensus timeout delay .* (\d+)', log).group(1)
-                ),
-                'sync_retry_delay': int(
-                    search(
-                        r'Consensus synchronizer retry delay .* (\d+)', log
-                    ).group(1)
-                ),
-                'max_payload_size': int(
-                    search(r'Consensus max payload size .* (\d+)', log).group(1)
-                ),
-                'min_block_delay': int(
-                    search(r'Consensus min block delay .* (\d+)', log).group(1)
-                ),
-            },
-            'mempool': {
-                'queue_capacity': int(
-                    search(r'Mempool queue capacity set to (\d+)', log).group(1)
-                ),
-                'sync_retry_delay': int(
-                    search(
-                        r'Mempool synchronizer retry delay .* (\d+)', log
-                    ).group(1)
-                ),
-                'max_payload_size': int(
-                    search(r'Mempool max payload size .* (\d+)', log).group(1)
-                ),
-                'min_block_delay': int(
-                    search(r'Mempool min block delay .* (\d+)', log).group(1)
-                ),
-            }
+            'header_size': int(
+                search(r'Header size .* (\d+)', log).group(1)
+            ),
+            'max_header_delay': int(
+                search(r'Max header delay .* (\d+)', log).group(1)
+            ),
+            'gc_depth': int(
+                search(r'Garbage collection depth .* (\d+)', log).group(1)
+            ),
+            'sync_retry_delay': int(
+                search(r'Sync retry delay .* (\d+)', log).group(1)
+            ),
+            'sync_retry_nodes': int(
+                search(r'Sync retry nodes .* (\d+)', log).group(1)
+            ),
+            'batch_size': int(
+                search(r'Batch size .* (\d+)', log).group(1)
+            ),
+            'max_batch_delay': int(
+                search(r'Max batch delay .* (\d+)', log).group(1)
+            ),
         }
-        '''
-
+        
         return proposals, commits, configs
 
     def _parse_workers(self, log):
@@ -190,21 +175,18 @@ class LogParser:
         return mean(latency) if latency else 0
 
     def result(self):
-        consensus_latency = self._consensus_latency() * 1000
+        header_size = self.configs[0]['header_size']
+        max_header_delay = self.configs[0]['max_header_delay']
+        gc_depth = self.configs[0]['gc_depth']
+        sync_retry_delay = self.configs[0]['sync_retry_delay']
+        sync_retry_nodes = self.configs[0]['sync_retry_nodes']
+        batch_size = self.configs[0]['batch_size']
+        max_batch_delay = self.configs[0]['max_batch_delay']
+
+        consensus_latency = self._consensus_latency() * 1_000
         consensus_tps, consensus_bps, _ = self._consensus_throughput()
         end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
-        end_to_end_latency = self._end_to_end_latency() * 1000
-
-        """
-        consensus_timeout_delay = self.configs[0]['consensus']['timeout_delay']
-        consensus_sync_retry_delay = self.configs[0]['consensus']['sync_retry_delay']
-        consensus_max_payload_size = self.configs[0]['consensus']['max_payload_size']
-        consensus_min_block_delay = self.configs[0]['consensus']['min_block_delay']
-        mempool_queue_capacity = self.configs[0]['mempool']['queue_capacity']
-        mempool_sync_retry_delay = self.configs[0]['mempool']['sync_retry_delay']
-        mempool_max_payload_size = self.configs[0]['mempool']['max_payload_size']
-        mempool_min_block_delay = self.configs[0]['mempool']['min_block_delay']
-        """
+        end_to_end_latency = self._end_to_end_latency() * 1_000
 
         return (
             '\n'
@@ -212,11 +194,19 @@ class LogParser:
             ' SUMMARY:\n'
             '-----------------------------------------\n'
             ' + CONFIG:\n'
-            f' Committee size: {self.committee_size} nodes\n'
+            f' Committee size: {self.committee_size:,} node(s)\n'
             f' Input rate: {sum(self.rate):,} tx/s\n'
             f' Transaction size: {self.size[0]:,} B\n'
-            f' Faults: {self.faults} nodes\n'
+            f' Faults: {self.faults:,} node(s)\n'
             f' Execution time: {round(duration):,} s\n'
+            '\n'
+            f' Header size: {header_size:,} B\n'
+            f' Max header delay: {max_header_delay:,} ms\n'
+            f' GC depth: {gc_depth:,} round(s)\n'
+            f' Sync retry delay: {sync_retry_delay:,} ms\n'
+            f' Sync retry nodes: {sync_retry_nodes:,} node(s)\n'
+            f' batch size: {batch_size:,} B\n'
+            f' Max batch delay: {max_batch_delay:,} ms\n'
             '\n'
             ' + RESULTS:\n'
             f' Consensus TPS: {round(consensus_tps):,} tx/s\n'

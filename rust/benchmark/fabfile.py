@@ -9,14 +9,14 @@ from aws.remote import Bench, BenchError
 
 
 @task
-def local(ctx):
+def local(ctx, debug=False):
     ''' Run benchmarks on localhost '''
     bench_params = {
         'nodes': 4,
         'workers': 1,
         'rate': 10_000,
         'tx_size': 512,
-        'faults': 0,
+        'faults': 1,
         'duration': 20,
     }
     node_params = {
@@ -29,8 +29,8 @@ def local(ctx):
         'max_batch_delay': 100
     }
     try:
-        ret = LocalBench(bench_params, node_params).run(debug=False).result()
-        print(ret)
+        ret = LocalBench(bench_params, node_params).run(debug)
+        print(ret.result())
     except BenchError as e:
         Print.error(e)
 
@@ -90,7 +90,7 @@ def install(ctx):
 
 
 @task
-def remote(ctx):
+def remote(ctx, debug=False):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'nodes': [10],
@@ -112,7 +112,7 @@ def remote(ctx):
         'max_batch_delay': 200
     }
     try:
-        Bench(ctx).run(bench_params, node_params, debug=False)
+        Bench(ctx).run(bench_params, node_params, debug)
     except BenchError as e:
         Print.error(e)
 
@@ -134,7 +134,7 @@ def plot(ctx):
 
 @task
 def kill(ctx):
-    ''' Stop any HotStuff execution on all machines '''
+    ''' Stop execution on all machines '''
     try:
         Bench(ctx).kill()
     except BenchError as e:
