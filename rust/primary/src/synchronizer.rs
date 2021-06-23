@@ -1,6 +1,6 @@
 use crate::error::DagResult;
+use crate::header_waiter::WaiterMessage;
 use crate::messages::{Certificate, Header};
-use crate::waiter::WaiterMessage;
 use std::collections::HashMap;
 use store::Store;
 use tokio::sync::mpsc::Sender;
@@ -10,13 +10,23 @@ use tokio::sync::mpsc::Sender;
 pub struct Synchronizer {
     /// The persistent storage.
     store: Store,
-    /// Send commands to the Waiter.
-    tx_waiter: Sender<WaiterMessage>,
+    /// Send commands to the `HeaderWaiter`.
+    tx_header_waiter: Sender<WaiterMessage>,
+    /// Send commands to the `CertificateWaiter`.
+    tx_certificate_waiter: Sender<Certificate>,
 }
 
 impl Synchronizer {
-    pub fn new(store: Store, tx_waiter: Sender<WaiterMessage>) -> Self {
-        Self { store, tx_waiter }
+    pub fn new(
+        store: Store,
+        tx_header_waiter: Sender<WaiterMessage>,
+        tx_certificate_waiter: Sender<Certificate>,
+    ) -> Self {
+        Self {
+            store,
+            tx_header_waiter,
+            tx_certificate_waiter,
+        }
     }
 
     /// Returns `true` if we have all transactions of the payload. If we don't, we return false,
@@ -37,13 +47,8 @@ impl Synchronizer {
             //         to workers #1 (rather than workers #0). Also, clients will never be able to retrieve batch
             //         X as they will be querying worker #1.
             let key = [digest.as_ref(), &worker_id.to_le_bytes()].concat();
-            match self.store.read(key).await? {
-                Some(_) => {
-                    // All ok, we have the batch.
-                }
-                None => {
-                    missing.insert(digest.clone(), *worker_id);
-                }
+            if self.store.read(key).await?.is_none() {
+                missing.insert(digest.clone(), *worker_id);
             }
         }
 
@@ -51,10 +56,10 @@ impl Synchronizer {
             return Ok(false);
         }
 
-        self.tx_waiter
+        self.tx_header_waiter
             .send(WaiterMessage::SyncBatches(missing, header.clone()))
             .await
-            .expect("Failed to send message to inner runner");
+            .expect("Failed to send sync batch request");
         Ok(true)
     }
 
@@ -75,10 +80,25 @@ impl Synchronizer {
             return Ok(parents);
         }
 
-        self.tx_waiter
+        self.tx_header_waiter
             .send(WaiterMessage::SyncParents(missing, header.clone()))
             .await
-            .expect("Failed to send message to inner runner");
+            .expect("Failed to send sync parents request");
         Ok(Vec::new())
+    }
+
+    /// Check whether we have all the ancestors of the certificate. If we don't, send the certificate to
+    /// the `CertificateWaiter` which will trigger re-processing once we have all the missing data.
+    pub async fn deliver_certificate(&mut self, certificate: &Certificate) -> DagResult<bool> {
+        for digest in &certificate.header.parents {
+            if self.store.read(digest.to_vec()).await?.is_none() {
+                self.tx_certificate_waiter
+                    .send(certificate.clone())
+                    .await
+                    .expect("Failed to send sync certificate request");
+                return Ok(false);
+            };
+        }
+        Ok(true)
     }
 }

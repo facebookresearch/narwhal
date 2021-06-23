@@ -9,14 +9,15 @@ extern crate rstest;
 #[macro_use]
 mod error;
 mod aggregators;
+mod certificate_waiter;
 mod core;
+mod header_waiter;
 mod helper;
 mod messages;
 mod payload_receiver;
 mod primary;
 mod proposer;
 mod synchronizer;
-mod waiter;
 
 pub mod committee;
 pub mod manage_primary;

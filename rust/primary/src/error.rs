@@ -45,7 +45,7 @@ pub enum DagError {
     #[error("Invalid signature")]
     InvalidSignature(#[from] CryptoError),
 
-    #[error("Store error: {0}")]
+    #[error("Storage failure: {0}")]
     StoreError(#[from] StoreError),
 
     #[error("Serialization error: {0}")]

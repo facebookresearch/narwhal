@@ -1,10 +1,11 @@
+use crate::certificate_waiter::CertificateWaiter;
 use crate::core::Core;
+use crate::header_waiter::HeaderWaiter;
 use crate::helper::Helper;
 use crate::messages::{Certificate, Header, Vote};
 use crate::payload_receiver::PayloadReceiver;
 use crate::proposer::Proposer;
 use crate::synchronizer::Synchronizer;
-use crate::waiter::Waiter;
 use async_trait::async_trait;
 use bytes::Bytes;
 use config::{Committee, Parameters, WorkerId};
@@ -61,14 +62,16 @@ impl Primary {
         parameters: Parameters,
         store: Store,
         tx_consensus: Sender<Certificate>,
-        rx_consensus: Receiver<Round>,
+        rx_consensus: Receiver<Certificate>,
     ) {
         let (tx_others_digests, rx_others_digests) = channel(CHANNEL_CAPACITY);
         let (tx_own_digests, rx_own_digests) = channel(CHANNEL_CAPACITY);
         let (tx_parents, rx_parents) = channel(CHANNEL_CAPACITY);
         let (tx_headers, rx_headers) = channel(CHANNEL_CAPACITY);
-        let (tx_sync_commands, rx_sync_commands) = channel(CHANNEL_CAPACITY);
-        let (tx_loopback, rx_loopback) = channel(CHANNEL_CAPACITY);
+        let (tx_sync_headers, rx_sync_headers) = channel(CHANNEL_CAPACITY);
+        let (tx_sync_certificates, rx_sync_certificates) = channel(CHANNEL_CAPACITY);
+        let (tx_headers_loopback, rx_headers_loopback) = channel(CHANNEL_CAPACITY);
+        let (tx_certificates_loopback, rx_certificates_loopback) = channel(CHANNEL_CAPACITY);
         let (tx_primary_messages, rx_primary_messages) = channel(CHANNEL_CAPACITY);
         let (tx_cert_requests, rx_cert_requests) = channel(CHANNEL_CAPACITY);
 
@@ -115,7 +118,11 @@ impl Primary {
         );
 
         // The `Synchronizer` provides auxiliary methods helping to `Core` to sync.
-        let synchronizer = Synchronizer::new(store.clone(), /* tx_waiter */ tx_sync_commands);
+        let synchronizer = Synchronizer::new(
+            store.clone(),
+            /* tx_header_waiter */ tx_sync_headers,
+            /* tx_certificate_waiter */ tx_sync_certificates,
+        );
 
         // The `SignatureService` is used to require signatures on specific digests.
         let signature_service = SignatureService::new(secret);
@@ -130,7 +137,8 @@ impl Primary {
             consensus_round.clone(),
             parameters.gc_depth,
             /* rx_primaries */ rx_primary_messages,
-            /* rx_waiter */ rx_loopback,
+            /* rx_header_waiter */ rx_headers_loopback,
+            /* rx_certificate_waiter */ rx_certificates_loopback,
             /* rx_proposer */ rx_headers,
             tx_consensus,
             /* tx_proposer */ tx_parents,
@@ -142,6 +150,29 @@ impl Primary {
         // Receives batch digests from other workers. They are only used to validate headers.
         PayloadReceiver::spawn(store.clone(), /* rx_workers */ rx_others_digests);
 
+        // Whenever the `Synchronizer` does not manage to validate a header due to missing parent certificates of
+        // batch digests, it commands the `HeaderWaiter` to synchronizer with other nodes, wait for their reply, and
+        // re-schedule execution of the header once we have all missing data.
+        HeaderWaiter::spawn(
+            name.clone(),
+            committee.clone(),
+            store.clone(),
+            consensus_round.clone(),
+            parameters.gc_depth,
+            parameters.sync_retry_delay,
+            parameters.sync_retry_nodes,
+            /* rx_synchronizer */ rx_sync_headers,
+            /* tx_core */ tx_headers_loopback,
+        );
+
+        // The `CertificateWaiter` waits to receive all the ancestors of a certificate before looping it back to the
+        // `Core` for further processing.
+        CertificateWaiter::spawn(
+            store.clone(),
+            /* rx_synchronizer */ rx_sync_certificates,
+            /* tx_core */ tx_certificates_loopback,
+        );
+
         // When the `Core` collects enough parent certificates, the `Proposer` generates a new header with new batch
         // digests from our workers and it back to the `Core`.
         Proposer::spawn(
@@ -152,21 +183,6 @@ impl Primary {
             /* rx_core */ rx_parents,
             /* rx_workers */ rx_own_digests,
             /* tx_core */ tx_headers,
-        );
-
-        // Whenever the `Synchronizer` does not manage to validate a header due to missing parent certificates of
-        // batch digests, it commands the `Waiter` to synchronizer with other nodes, wait for their reply, and
-        // re-schedule execution of the header once we have all missing data.
-        Waiter::spawn(
-            name.clone(),
-            committee.clone(),
-            store.clone(),
-            consensus_round.clone(),
-            parameters.gc_depth,
-            parameters.sync_retry_delay,
-            parameters.sync_retry_nodes,
-            /* rx_synchronizer */ rx_sync_commands,
-            /* tx_core */ tx_loopback,
         );
 
         // The `Helper` is dedicated to reply to certificates requests from other primaries.
@@ -249,10 +265,10 @@ impl MessageHandler for WorkerReceiverHandler {
 struct GarbageCollector;
 
 impl GarbageCollector {
-    pub fn spawn(consensus_round: Arc<AtomicU64>, mut rx_consensus: Receiver<Round>) {
+    pub fn spawn(consensus_round: Arc<AtomicU64>, mut rx_consensus: Receiver<Certificate>) {
         tokio::spawn(async move {
-            while let Some(round) = rx_consensus.recv().await {
-                consensus_round.store(round, Ordering::Relaxed);
+            while let Some(certificate) = rx_consensus.recv().await {
+                consensus_round.store(certificate.round, Ordering::Relaxed);
             }
         });
     }

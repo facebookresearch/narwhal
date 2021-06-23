@@ -34,8 +34,10 @@ pub struct Core {
 
     /// Receiver for dag messages (headers, votes, certificates).
     rx_primaries: Receiver<PrimaryMessage>,
-    /// Receives loopback messages from the `Waiter`.
-    rx_waiter: Receiver<Header>,
+    /// Receives loopback headers from the `HeaderWaiter`.
+    rx_header_waiter: Receiver<Header>,
+    /// Receives loopback certificates from the `CertificateWaiter`.
+    rx_certificate_waiter: Receiver<Certificate>,
     /// Receives our newly created headers from the `Proposer`.
     rx_proposer: Receiver<Header>,
     /// Output all certificates to the consensus layer.
@@ -71,7 +73,8 @@ impl Core {
         consensus_round: Arc<AtomicU64>,
         gc_depth: Round,
         rx_primaries: Receiver<PrimaryMessage>,
-        rx_waiter: Receiver<Header>,
+        rx_header_waiter: Receiver<Header>,
+        rx_certificate_waiter: Receiver<Certificate>,
         rx_proposer: Receiver<Header>,
         tx_consensus: Sender<Certificate>,
         tx_proposer: Sender<(Vec<Digest>, Round)>,
@@ -86,7 +89,8 @@ impl Core {
                 consensus_round,
                 gc_depth,
                 rx_primaries,
-                rx_waiter,
+                rx_header_waiter,
+                rx_certificate_waiter,
                 rx_proposer,
                 tx_consensus,
                 tx_proposer,
@@ -140,7 +144,7 @@ impl Core {
         // reschedule processing of this header.
         let parents = self.synchronizer.get_parents(header).await?;
         if parents.is_empty() {
-            debug!("Processing of {} suspended: missing payload", header.id);
+            debug!("Processing of {} suspended: missing parent(s)", header.id);
             return Ok(());
         }
 
@@ -205,7 +209,6 @@ impl Core {
         // reschedule processing of this header once we have it.
         if self.synchronizer.missing_payload(header).await? {
             debug!("Processing of {} suspended: missing payload", header);
-            // TODO: schedule re-processing.
             return Ok(());
         }
 
@@ -279,8 +282,18 @@ impl Core {
             .get(&certificate.header.round)
             .map_or_else(|| false, |x| x.contains(&certificate.header.id))
         {
-            // This function may still throw an error if the header is malformed.
+            // This function may still throw an error if the storage fails.
             self.handle_header(&certificate.header).await?;
+        }
+
+        // Ensure we have all the ancestors of this certificate yet. If we don't, the synchronizer will gather
+        // them and trigger re-processing of this certificate.
+        if !self.synchronizer.deliver_certificate(&certificate).await? {
+            debug!(
+                "Processing of {:?} suspended: missing ancestors",
+                certificate
+            );
+            return Ok(());
         }
 
         // Store the certificate.
@@ -338,16 +351,24 @@ impl Core {
                     }
                 },
 
-                // We receive here loopback messages from the `Synchronizer`. Those are message for which we interrupted
+                // We receive here loopback headers from the `HeaderWaiter`. Those are headers for which we interrupted
                 // execution (we were missing some of their dependencies) and we are now ready to resume processing.
-                Some(header) = self.rx_waiter.recv() => self.process_header(&header).await,
+                Some(header) = self.rx_header_waiter.recv() => self.process_header(&header).await,
+
+                // We receive here loopback certificates from the `CertificateWaiter`. Those are certificates for which
+                // we interrupted execution (we were missing some of their ancestors) and we are now ready to resume
+                // processing.
+                Some(certificate) = self.rx_certificate_waiter.recv() => self.process_certificate(certificate).await,
 
                 // We also receive here our new headers created by the `Proposer`.
                 Some(header) = self.rx_proposer.recv() => self.process_own_header(&header).await,
             };
             match result {
                 Ok(()) => (),
-                Err(DagError::StoreError(e)) => error!("{}", e),
+                Err(DagError::StoreError(e)) => {
+                    error!("{}", e);
+                    panic!("Storage failure: killing node.");
+                }
                 Err(e) => warn!("{}", e),
             }
 

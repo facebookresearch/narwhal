@@ -29,7 +29,7 @@ pub enum WaiterMessage {
 }
 
 /// Waits for missing parent certificates and batches' digests.
-pub struct Waiter {
+pub struct HeaderWaiter {
     /// The name of this authority.
     name: PublicKey,
     /// The committee information.
@@ -63,7 +63,7 @@ pub struct Waiter {
     pending: HashMap<Digest, (Round, Sender<()>)>,
 }
 
-impl Waiter {
+impl HeaderWaiter {
     pub fn spawn(
         name: PublicKey,
         committee: Committee,
@@ -194,7 +194,7 @@ impl Waiter {
                             let fut = Self::waiter(wait_for, header, rx_cancel);
                             waiting.push(fut);
 
-                            // Ensure we didn't already send a sync request for these parents.
+                            // Ensure we didn't already sent a sync request for these parents.
                             // Optimistically send the sync request to the node that created the certificate.
                             // If this fails (after a timeout), we broadcast the sync request.
                             let now = SystemTime::now()
@@ -235,7 +235,10 @@ impl Waiter {
                     Ok(None) => {
                         // This request has been canceled.
                     },
-                    Err(e) => error!("{}", e)
+                    Err(e) => {
+                        error!("{}", e);
+                        panic!("Storage failure: killing node.");
+                    }
                 },
 
                 () = &mut timer => {
