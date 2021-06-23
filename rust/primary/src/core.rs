@@ -155,10 +155,10 @@ impl Core {
         let mut stake = 0;
         for x in parents {
             ensure!(
-                x.round + 1 == header.round,
+                x.round() + 1 == header.round,
                 DagError::MalformedHeader(header.id.clone())
             );
-            stake += self.committee.stake(&x.origin);
+            stake += self.committee.stake(&x.origin());
         }
         ensure!(
             stake >= self.committee.quorum_threshold(),
@@ -230,7 +230,7 @@ impl Core {
                 .expect("Failed to serialize our own certificate");
             let handlers = self.network.broadcast(addresses, Bytes::from(bytes)).await;
             self.cancel_handlers
-                .entry(certificate.round)
+                .entry(certificate.round())
                 .or_insert_with(Vec::new)
                 .extend(handlers);
 
@@ -276,13 +276,13 @@ impl Core {
         // Check if we have enough certificates to enter a new dag round and propose a header.
         if let Some(parents) = self
             .certificates_aggregators
-            .entry(certificate.round)
+            .entry(certificate.round())
             .or_insert_with(|| Box::new(CertificatesAggregator::new()))
             .append(certificate.clone(), &self.committee)?
         {
             // Send it to the `Proposer`.
             self.tx_proposer
-                .send((parents, certificate.round))
+                .send((parents, certificate.round()))
                 .await
                 .expect("Failed to send certificate");
         }
@@ -331,7 +331,7 @@ impl Core {
     }
 
     fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
-        if self.gc_round > certificate.round {
+        if self.gc_round > certificate.round() {
             return Ok(());
         }
 

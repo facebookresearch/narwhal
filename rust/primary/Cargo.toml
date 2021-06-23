@@ -23,3 +23,6 @@ crypto = { path = "../crypto" }
 store = { path = "../store" }
 config = { path = "../config" }
 network = { path = "../network" }
+
+[features]
+benchmark = []

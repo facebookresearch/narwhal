@@ -2,8 +2,8 @@ use crate::error::DagResult;
 use crate::header_waiter::WaiterMessage;
 use crate::messages::{Certificate, Header};
 use config::Committee;
-use crypto::Digest;
 use crypto::Hash as _;
+use crypto::{Digest, PublicKey};
 use std::collections::HashMap;
 use store::Store;
 use tokio::sync::mpsc::Sender;
@@ -11,6 +11,8 @@ use tokio::sync::mpsc::Sender;
 /// The `Synchronizer` checks if we have all batches and parents referenced by a header. If we don't, it sends
 /// a command to the `Waiter` to request the missing data.
 pub struct Synchronizer {
+    /// The public key of this primary.
+    name: PublicKey,
     /// The persistent storage.
     store: Store,
     /// Send commands to the `HeaderWaiter`.
@@ -23,12 +25,14 @@ pub struct Synchronizer {
 
 impl Synchronizer {
     pub fn new(
+        name: PublicKey,
         committee: &Committee,
         store: Store,
         tx_header_waiter: Sender<WaiterMessage>,
         tx_certificate_waiter: Sender<Certificate>,
     ) -> Self {
         Self {
+            name,
             store,
             tx_header_waiter,
             tx_certificate_waiter,
@@ -43,6 +47,11 @@ impl Synchronizer {
     /// synchronize with other nodes (through our workers), and re-schedule processing of the
     /// header for when we will have its complete payload.
     pub async fn missing_payload(&mut self, header: &Header) -> DagResult<bool> {
+        // We don't store the payload of our own workers.
+        if header.author == self.name {
+            return Ok(false);
+        }
+
         let mut missing = HashMap::new();
         for (digest, worker_id) in header.payload.iter() {
             // Check whether we have the batch. If one of our worker has the batch, the primary stores the pair

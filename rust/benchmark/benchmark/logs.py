@@ -86,15 +86,14 @@ class LogParser:
         return size, rate, start, misses, samples
 
     def _parse_primaries(self, log):
-        #if search(r'(?:panic|Error)', log) is not None:
-        if search(r'panic', log) is not None:
+        if search(r'(?:panic|Error)', log) is not None:
             raise ParseError('Node(s) panicked')
 
-        tmp = findall(r'\[(.*Z) .* Created B\d+\(([^ ]+)\)', log)
+        tmp = findall(r'\[(.*Z) .* Created B\d+\([^ ]+\) -> ([^ ]+=)', log)
         tmp = [(d, self._to_posix(t)) for t, d in tmp]
         proposals = self._merge_results([tmp])
 
-        tmp = findall(r'\[(.*Z) .* Committed B\d+\(([^ ]+)\)', log)
+        tmp = findall(r'\[(.*Z) .* Committed B\d+\([^ ]+\) -> ([^ ]+=)', log)
         tmp = [(d, self._to_posix(t)) for t, d in tmp]
         commits = self._merge_results([tmp])
 

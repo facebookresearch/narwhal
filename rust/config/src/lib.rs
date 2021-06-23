@@ -85,9 +85,9 @@ impl Default for Parameters {
     fn default() -> Self {
         Self {
             header_size: 1_000,
-            max_header_delay: 0,
+            max_header_delay: 100,
             gc_depth: 50,
-            sync_retry_delay: 10_000,
+            sync_retry_delay: 5_000,
             sync_retry_nodes: 3,
             batch_size: 500_000,
             max_batch_delay: 100,
@@ -99,13 +99,13 @@ impl Import for Parameters {}
 
 impl Parameters {
     pub fn log(&self) {
-        info!("Header size set to {}", self.header_size);
-        info!("Max header delay set to {}", self.max_header_delay);
-        info!("Garbage collection depth set to {}", self.gc_depth);
-        info!("Sync retry delay set to {}", self.sync_retry_delay);
-        info!("Sync retry nodes set to {}", self.sync_retry_nodes);
-        info!("Batch size set to {}", self.batch_size);
-        info!("Max batch delay set to {}", self.max_batch_delay);
+        info!("Header size set to {} B", self.header_size);
+        info!("Max header delay set to {} ms", self.max_header_delay);
+        info!("Garbage collection depth set to {} rounds", self.gc_depth);
+        info!("Sync retry delay set to {} ms", self.sync_retry_delay);
+        info!("Sync retry nodes set to {} nodes", self.sync_retry_nodes);
+        info!("Batch size set to {} B", self.batch_size);
+        info!("Max batch delay set to {} ms", self.max_batch_delay);
     }
 }
 
@@ -209,6 +209,20 @@ impl Committee {
             .find(|(worker_id, _)| worker_id == &id)
             .map(|(_, worker)| worker.clone())
             .ok_or_else(|| ConfigError::NotInCommittee(*to))
+    }
+
+    /// Returns the addresses of all our workers.
+    pub fn our_workers(&self, myself: &PublicKey) -> Result<Vec<WorkerAddresses>, ConfigError> {
+        self.authorities
+            .iter()
+            .find(|(name, _)| name == &myself)
+            .map(|(_, authority)| authority)
+            .ok_or_else(|| ConfigError::NotInCommittee(*myself))?
+            .workers
+            .values()
+            .cloned()
+            .map(|x| Ok(x))
+            .collect()
     }
 
     /// Returns the addresses of all workers with a specific id except the ones of the authority

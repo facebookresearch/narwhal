@@ -3,7 +3,9 @@ use crate::primary::Round;
 use config::{Committee, WorkerId};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
-use log::{debug, info};
+use log::debug;
+#[cfg(feature = "benchmark")]
+use log::info;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
@@ -80,8 +82,13 @@ impl Proposer {
             &mut self.signature_service,
         )
         .await;
-        info!("Created {}", header);
         debug!("Created {:?}", header);
+
+        #[cfg(feature = "benchmark")]
+        for (digest, _) in &header.payload {
+            // NOTE: This log entry is used to compute performance.
+            info!("Created {} -> {:?}", header, digest);
+        }
 
         // Send the new header to the `Core` that will broadcast and process it.
         self.tx_core
@@ -109,6 +116,7 @@ impl Proposer {
             if (timer_expired || enough_digests) && enough_parents {
                 // Make a new header.
                 self.make_header().await;
+                self.payload_size = 0;
 
                 // Reschedule the timer.
                 let deadline = Instant::now() + Duration::from_millis(self.max_header_delay);

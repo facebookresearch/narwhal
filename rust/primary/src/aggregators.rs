@@ -38,8 +38,6 @@ impl VotesAggregator {
             self.weight = 0; // Ensures quorum is only reached once.
             return Ok(Some(Certificate {
                 header: header.clone(),
-                round: vote.round,
-                origin: vote.origin,
                 votes: self.votes.clone(),
             }));
         }
@@ -68,7 +66,7 @@ impl CertificatesAggregator {
         certificate: Certificate,
         committee: &Committee,
     ) -> DagResult<Option<Vec<Digest>>> {
-        let origin = certificate.origin;
+        let origin = certificate.origin();
 
         // Ensure it is the first time this authority votes.
         ensure!(self.used.insert(origin), DagError::AuthorityReuse(origin));

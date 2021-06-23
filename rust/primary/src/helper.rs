@@ -1,3 +1,4 @@
+use crate::primary::PrimaryMessage;
 use bytes::Bytes;
 use config::Committee;
 use crypto::{Digest, PublicKey};
@@ -52,7 +53,14 @@ impl Helper {
             // Reply to the request (the best we can).
             for digest in digests {
                 match self.store.read(digest.to_vec()).await {
-                    Ok(Some(data)) => self.network.send(address, Bytes::from(data)).await,
+                    Ok(Some(data)) => {
+                        // TODO: Remove this deserialization-serialization in the critical path.
+                        let certificate = bincode::deserialize(&data)
+                            .expect("Failed to deserialize our own certificate");
+                        let bytes = bincode::serialize(&PrimaryMessage::Certificate(certificate))
+                            .expect("Failed to serialize our own certificate");
+                        self.network.send(address, Bytes::from(bytes)).await;
+                    }
                     Ok(None) => (),
                     Err(e) => error!("{}", e),
                 }

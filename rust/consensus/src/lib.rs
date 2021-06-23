@@ -1,7 +1,7 @@
 use config::{Committee, Stake};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
-use log::{debug, info, warn};
+use log::{debug, info, log_enabled, warn};
 use primary::{Certificate, Round};
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
@@ -28,7 +28,7 @@ impl State {
     fn new(genesis: Vec<Certificate>) -> Self {
         let genesis = genesis
             .into_iter()
-            .map(|x| (x.origin, (x.digest(), x)))
+            .map(|x| (x.origin(), (x.digest(), x)))
             .collect::<HashMap<_, _>>();
 
         Self {
@@ -37,12 +37,12 @@ impl State {
         }
     }
 
-    // Update and clean up internal state base on committed certificates.
+    /// Update and clean up internal state base on committed certificates.
     fn update(&mut self, certificate: &Certificate) {
         self.last_committed
-            .entry(certificate.origin)
-            .and_modify(|r| *r = max(*r, certificate.round))
-            .or_insert_with(|| certificate.round);
+            .entry(certificate.origin())
+            .and_modify(|r| *r = max(*r, certificate.round()))
+            .or_insert_with(|| certificate.round());
 
         for (name, round) in &self.last_committed {
             self.dag.retain(|r, authorities| {
@@ -96,14 +96,14 @@ impl Consensus {
         // Listen to incoming certificates.
         while let Some(certificate) = self.rx_primary.recv().await {
             debug!("Processing {:?}", certificate);
-            let round = certificate.round;
+            let round = certificate.round();
 
             // Add the new certificate to the local storage.
             state
                 .dag
                 .entry(round)
                 .or_insert_with(HashMap::new)
-                .insert(certificate.origin, (certificate.digest(), certificate));
+                .insert(certificate.origin(), (certificate.digest(), certificate));
 
             // Try to order the dag to commit. Start from the highest round for which we have at least
             // 2f+1 certificates. This is because we need them to reveal the common coin.
@@ -128,7 +128,7 @@ impl Consensus {
                 .expect("We should have the whole history by now")
                 .values()
                 .filter(|(_, x)| x.header.parents.contains(&leader_digest))
-                .map(|(_, x)| self.committee.stake(&x.origin))
+                .map(|(_, x)| self.committee.stake(&x.origin()))
                 .sum();
 
             // If it is the case, we can commit the leader. But first, we need to recursively go back to
@@ -139,7 +139,6 @@ impl Consensus {
                 continue;
             }
 
-            debug!("Leader {:?} has enough support", certificate);
             // Get an ordered list of past leaders that are linked to the current leader.
             let mut sequence = Vec::new();
             let ordered_leaders = self.order_leaders(certificate, &state);
@@ -154,14 +153,22 @@ impl Consensus {
                 }
             }
 
+            // Log the latest committed round of every authority (for debug).
+            if log_enabled!(log::Level::Debug) {
+                for (name, round) in &state.last_committed {
+                    debug!("Latest commit of {}: Round {}", name, round);
+                }
+            }
+
             // Output the sequence in the right order.
             for certificate in sequence {
-                info!("Committed B{}", certificate.round);
+                #[cfg(not(feature = "benchmark"))]
+                info!("Committed {}", certificate.header);
 
                 #[cfg(feature = "benchmark")]
                 for (digest, _) in &certificate.header.payload {
                     // NOTE: This log entry is used to compute performance.
-                    info!("Committed B{}({:?})", certificate.round, digest);
+                    info!("Committed {} -> {:?}", certificate.header, digest);
                 }
 
                 self.tx_primary
@@ -203,28 +210,29 @@ impl Consensus {
         // If we already ordered the last leader, there is nothing to do.
         if state
             .last_committed
-            .get(&leader.origin)
-            .map_or_else(|| false, |r| r == &leader.round)
+            .get(&leader.origin())
+            .map_or_else(|| false, |r| r == &leader.round())
         {
             return Vec::new();
         }
 
         // If we didn't, we look for all past leaders that we didn't order yet.
+        debug!("Leader {:?} has enough support", leader);
         let mut to_commit = vec![leader.clone()];
         while let Some(previous_leader) = self.previous_leader(leader, &state.dag) {
             // Compute the stop condition. We stop ordering leaders when we reached either the genesis,
             // or (2) the last committed leader.
-            debug!("Leaders {:?} <- {:?} are linked", previous_leader, leader);
             let mut stop = self.genesis.contains(previous_leader);
             stop |= state
                 .last_committed
-                .get(&previous_leader.origin)
-                .map_or_else(|| false, |r| r == &previous_leader.round);
+                .get(&previous_leader.origin())
+                .map_or_else(|| false, |r| r == &previous_leader.round());
 
             if stop {
                 break;
             }
 
+            debug!("Leaders {:?} <- {:?} are linked", previous_leader, leader);
             leader = previous_leader;
             to_commit.push(previous_leader.clone());
         }
@@ -233,7 +241,7 @@ impl Consensus {
 
     /// Returns the certificate originated by the previous leader, if it is linked to the input leader.
     fn previous_leader<'a>(&self, leader: &Certificate, dag: &'a Dag) -> Option<&'a Certificate> {
-        let r = leader.round;
+        let r = leader.round();
 
         // Get the certificate proposed by the pervious leader.
         let previous_leader_round = r - 2;
@@ -269,7 +277,7 @@ impl Consensus {
             for parent in &x.header.parents {
                 let (digest, certificate) = match state
                     .dag
-                    .get(&(x.round - 1))
+                    .get(&(x.round() - 1))
                     .expect("We should have the whole history by now")
                     .values()
                     .find(|(x, _)| x == parent)
@@ -284,8 +292,8 @@ impl Consensus {
                 skip |= self.genesis.contains(certificate);
                 skip |= state
                     .last_committed
-                    .get(&certificate.origin)
-                    .map_or_else(|| false, |r| r == &certificate.round);
+                    .get(&certificate.origin())
+                    .map_or_else(|| false, |r| r == &certificate.round());
 
                 if !skip {
                     buffer.push(certificate);
@@ -295,7 +303,7 @@ impl Consensus {
         }
 
         // Ordering the output by round is not really necessary but it makes the commit sequence prettier.
-        ordered.sort_by_key(|x| x.round);
+        ordered.sort_by_key(|x| x.round());
         ordered
     }
 }

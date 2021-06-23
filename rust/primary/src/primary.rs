@@ -1,6 +1,7 @@
 use crate::certificate_waiter::CertificateWaiter;
 use crate::core::Core;
 use crate::error::DagError;
+use crate::garbage_collector::GarbageCollector;
 use crate::header_waiter::HeaderWaiter;
 use crate::helper::Helper;
 use crate::messages::{Certificate, Header, Vote};
@@ -16,7 +17,7 @@ use log::info;
 use network::{MessageHandler, Receiver as NetworkReceiver, Writer};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -126,6 +127,7 @@ impl Primary {
 
         // The `Synchronizer` provides auxiliary methods helping to `Core` to sync.
         let synchronizer = Synchronizer::new(
+            name,
             &committee,
             store.clone(),
             /* tx_header_waiter */ tx_sync_headers,
@@ -153,7 +155,7 @@ impl Primary {
         );
 
         // Keeps track of the latest consensus round and allows other tasks to clean up their their internal state
-        GarbageCollector::spawn(consensus_round.clone(), rx_consensus);
+        GarbageCollector::spawn(&name, &committee, consensus_round.clone(), rx_consensus);
 
         // Receives batch digests from other workers. They are only used to validate headers.
         PayloadReceiver::spawn(store.clone(), /* rx_workers */ rx_others_digests);
@@ -267,22 +269,5 @@ impl MessageHandler for WorkerReceiverHandler {
                 .expect("Failed to send workers' digests"),
         }
         Ok(())
-    }
-}
-
-/// Receives the highest round reached by consensus and update it for all tasks.
-struct GarbageCollector;
-
-impl GarbageCollector {
-    pub fn spawn(consensus_round: Arc<AtomicU64>, mut rx_consensus: Receiver<Certificate>) {
-        tokio::spawn(async move {
-            while let Some(certificate) = rx_consensus.recv().await {
-                // TODO [issue #9]: Re-include batch digests that have not been sequenced into our next block.
-
-                consensus_round.store(certificate.round, Ordering::Relaxed);
-
-                // TODO: Cleanup workers.
-            }
-        });
     }
 }
