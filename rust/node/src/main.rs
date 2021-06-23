@@ -106,7 +106,7 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
             );
             Consensus::spawn(
                 committee,
-                /* rx_waiter */ rx_new_certificates,
+                /* rx_primary */ rx_new_certificates,
                 /* tx_primary */ tx_feedback,
                 tx_output,
             );

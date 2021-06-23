@@ -1,6 +1,7 @@
-use crate::messages::Header;
+use crate::messages::{Certificate, Header};
 use crate::primary::Round;
-use config::WorkerId;
+use config::{Committee, WorkerId};
+use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
 use log::{debug, info};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -37,6 +38,7 @@ pub struct Proposer {
 impl Proposer {
     pub fn spawn(
         name: PublicKey,
+        committee: &Committee,
         signature_service: SignatureService,
         header_size: usize,
         max_header_delay: u64,
@@ -44,6 +46,11 @@ impl Proposer {
         rx_workers: Receiver<(Digest, WorkerId)>,
         tx_core: Sender<Header>,
     ) {
+        let genesis = Certificate::genesis(committee)
+            .iter()
+            .map(|x| x.digest())
+            .collect();
+
         tokio::spawn(async move {
             Self {
                 name,
@@ -53,8 +60,8 @@ impl Proposer {
                 rx_core,
                 rx_workers,
                 tx_core,
-                round: 0,
-                last_parents: Vec::new(),
+                round: 1,
+                last_parents: genesis,
                 digests: Vec::with_capacity(2 * header_size),
                 payload_size: 0,
             }
@@ -74,6 +81,7 @@ impl Proposer {
         )
         .await;
         info!("Created {}", header);
+        debug!("Created {:?}", header);
 
         // Send the new header to the `Core` that will broadcast and process it.
         self.tx_core
@@ -84,6 +92,8 @@ impl Proposer {
 
     // Main loop listening to incoming messages.
     pub async fn run(&mut self) {
+        debug!("Dag starting at round {}", self.round);
+
         let timer = sleep(Duration::from_millis(self.max_header_delay));
         tokio::pin!(timer);
 

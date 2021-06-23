@@ -60,7 +60,7 @@ pub struct Core {
     /// A network sender to send the batches to the other workers.
     network: ReliableSender,
     /// Keeps the cancel handlers of the messages we sent.
-    cancel_handlers: HashMap<Round, CancelHandler>,
+    cancel_handlers: HashMap<Round, Vec<CancelHandler>>,
 }
 
 impl Core {
@@ -109,7 +109,7 @@ impl Core {
         });
     }
 
-    async fn process_own_header(&mut self, header: &Header) -> DagResult<()> {
+    async fn process_own_header(&mut self, header: Header) -> DagResult<()> {
         // Reset the votes aggregator.
         self.current_header = header.clone();
         self.votes_aggregator = VotesAggregator::new();
@@ -121,11 +121,13 @@ impl Core {
             .iter()
             .map(|(_, x)| x.primary_to_primary)
             .collect();
-        let bytes = bincode::serialize(header).expect("Failed to serialize our own header");
+        let bytes = bincode::serialize(&PrimaryMessage::Header(header.clone()))
+            .expect("Failed to serialize our own header");
         let handlers = self.network.broadcast(addresses, Bytes::from(bytes)).await;
-        for handler in handlers {
-            self.cancel_handlers.insert(header.round, handler);
-        }
+        self.cancel_handlers
+            .entry(header.round)
+            .or_insert_with(Vec::new)
+            .extend(handlers);
 
         // Process the header.
         self.process_header(&header).await
@@ -133,7 +135,7 @@ impl Core {
 
     #[async_recursion]
     async fn process_header(&mut self, header: &Header) -> DagResult<()> {
-        debug!("Processing {}", header);
+        debug!("Processing {:?}", header);
         // Indicate that we are processing this header.
         self.processing
             .entry(header.round)
@@ -182,8 +184,8 @@ impl Core {
             .insert(header.author)
         {
             // Make a vote and send it to the header's creator.
-            let round = header.round;
             let vote = Vote::new(header, &self.name, &mut self.signature_service).await;
+            debug!("Created {:?}", vote);
             if vote.origin == self.name {
                 self.process_vote(vote)
                     .await
@@ -197,7 +199,10 @@ impl Core {
                 let bytes = bincode::serialize(&PrimaryMessage::Vote(vote))
                     .expect("Failed to serialize our own vote");
                 let handler = self.network.send(address, Bytes::from(bytes)).await;
-                self.cancel_handlers.insert(round, handler);
+                self.cancel_handlers
+                    .entry(header.round)
+                    .or_insert_with(Vec::new)
+                    .push(handler);
             }
         }
         Ok(())
@@ -224,9 +229,10 @@ impl Core {
             let bytes = bincode::serialize(&PrimaryMessage::Certificate(certificate.clone()))
                 .expect("Failed to serialize our own certificate");
             let handlers = self.network.broadcast(addresses, Bytes::from(bytes)).await;
-            for handler in handlers {
-                self.cancel_handlers.insert(certificate.round, handler);
-            }
+            self.cancel_handlers
+                .entry(certificate.round)
+                .or_insert_with(Vec::new)
+                .extend(handlers);
 
             // Process the new certificate.
             self.process_certificate(certificate)
@@ -375,7 +381,7 @@ impl Core {
                 Some(certificate) = self.rx_certificate_waiter.recv() => self.process_certificate(certificate).await,
 
                 // We also receive here our new headers created by the `Proposer`.
-                Some(header) = self.rx_proposer.recv() => self.process_own_header(&header).await,
+                Some(header) = self.rx_proposer.recv() => self.process_own_header(header).await,
             };
             match result {
                 Ok(()) => (),

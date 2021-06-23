@@ -9,8 +9,7 @@ use bytes::Bytes;
 use config::{Committee, Parameters, WorkerId};
 use crypto::{Digest, PublicKey};
 use futures::sink::SinkExt as _;
-use log::error;
-use log::info;
+use log::{error, info, warn};
 use network::{MessageHandler, Receiver, Writer};
 use primary::PrimaryWorkerMessage;
 use serde::{Deserialize, Serialize};
@@ -273,17 +272,18 @@ impl MessageHandler for WorkerReceiverHandler {
         let _ = writer.send(Bytes::from("Ack")).await;
 
         // Deserialize and parse the message.
-        match bincode::deserialize(&serialized)? {
-            WorkerMessage::Batch(..) => self
+        match bincode::deserialize(&serialized) {
+            Ok(WorkerMessage::Batch(..)) => self
                 .tx_processor
                 .send(serialized.to_vec())
                 .await
                 .expect("Failed to send batch"),
-            WorkerMessage::BatchRequest(missing, requestor) => self
+            Ok(WorkerMessage::BatchRequest(missing, requestor)) => self
                 .tx_helper
                 .send((missing, requestor))
                 .await
                 .expect("Failed to send batch request"),
+            Err(e) => warn!("Serialization error: {}", e),
         }
         Ok(())
     }

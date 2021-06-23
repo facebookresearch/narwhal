@@ -32,9 +32,11 @@ class PathMaker:
         return f'.node-{i}.json'
 
     @staticmethod
-    def db_path(i):
+    def db_path(i, j=None):
         assert isinstance(i, int) and i >= 0
-        return f'.db-{i}'
+        assert (isinstance(j, int) and i >= 0) or j is None
+        worker_id = f'-{j}' if j is not None else ''
+        return f'.db-{i}{worker_id}'
 
     @staticmethod
     def logs_path():

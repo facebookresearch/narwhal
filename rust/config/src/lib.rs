@@ -1,4 +1,5 @@
 use crypto::{generate_production_keypair, PublicKey, SecretKey};
+use log::info;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -95,6 +96,18 @@ impl Default for Parameters {
 }
 
 impl Import for Parameters {}
+
+impl Parameters {
+    pub fn log(&self) {
+        info!("Header size set to {}", self.header_size);
+        info!("Max header delay set to {}", self.max_header_delay);
+        info!("Garbage collection depth set to {}", self.gc_depth);
+        info!("Sync retry delay set to {}", self.sync_retry_delay);
+        info!("Sync retry nodes set to {}", self.sync_retry_nodes);
+        info!("Batch size set to {}", self.batch_size);
+        info!("Max batch delay set to {}", self.max_batch_delay);
+    }
+}
 
 #[derive(Clone, Deserialize)]
 pub struct PrimaryAddresses {

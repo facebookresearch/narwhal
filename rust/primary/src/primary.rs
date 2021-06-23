@@ -1,5 +1,6 @@
 use crate::certificate_waiter::CertificateWaiter;
 use crate::core::Core;
+use crate::error::DagError;
 use crate::header_waiter::HeaderWaiter;
 use crate::helper::Helper;
 use crate::messages::{Certificate, Header, Vote};
@@ -74,6 +75,9 @@ impl Primary {
         let (tx_primary_messages, rx_primary_messages) = channel(CHANNEL_CAPACITY);
         let (tx_cert_requests, rx_cert_requests) = channel(CHANNEL_CAPACITY);
 
+        // Write the parameters to the logs.
+        parameters.log();
+
         // Parse the public and secret key of this authority.
         let name = keypair.name;
         let secret = keypair.secret;
@@ -122,6 +126,7 @@ impl Primary {
 
         // The `Synchronizer` provides auxiliary methods helping to `Core` to sync.
         let synchronizer = Synchronizer::new(
+            &committee,
             store.clone(),
             /* tx_header_waiter */ tx_sync_headers,
             /* tx_certificate_waiter */ tx_sync_certificates,
@@ -180,6 +185,7 @@ impl Primary {
         // digests from our workers and it back to the `Core`.
         Proposer::spawn(
             name,
+            &committee,
             signature_service,
             parameters.header_size,
             parameters.max_header_delay,
@@ -217,7 +223,7 @@ impl MessageHandler for PrimaryReceiverHandler {
         let _ = writer.send(Bytes::from("Ack")).await;
 
         // Deserialize and parse the message.
-        match bincode::deserialize(&serialized)? {
+        match bincode::deserialize(&serialized).map_err(DagError::SerializationError)? {
             PrimaryMessage::CertificatesRequest(missing, requestor) => self
                 .tx_cert_requests
                 .send((missing, requestor))
@@ -248,7 +254,7 @@ impl MessageHandler for WorkerReceiverHandler {
         serialized: Bytes,
     ) -> Result<(), Box<dyn Error>> {
         // Deserialize and parse the message.
-        match bincode::deserialize(&serialized)? {
+        match bincode::deserialize(&serialized).map_err(DagError::SerializationError)? {
             WorkerPrimaryMessage::OwnBatch(digest, worker_id) => self
                 .tx_own_digests
                 .send((digest, worker_id))
@@ -270,10 +276,12 @@ struct GarbageCollector;
 impl GarbageCollector {
     pub fn spawn(consensus_round: Arc<AtomicU64>, mut rx_consensus: Receiver<Certificate>) {
         tokio::spawn(async move {
-            // TODO [issue #9]: Re-include batch digests that have not been sequenced.
-
             while let Some(certificate) = rx_consensus.recv().await {
+                // TODO [issue #9]: Re-include batch digests that have not been sequenced into our next block.
+
                 consensus_round.store(certificate.round, Ordering::Relaxed);
+
+                // TODO: Cleanup workers.
             }
         });
     }

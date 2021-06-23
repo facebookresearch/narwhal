@@ -16,7 +16,7 @@ def local(ctx):
         'workers': 1,
         'rate': 10_000,
         'tx_size': 512,
-        'faults': 1,
+        'faults': 0,
         'duration': 20,
     }
     node_params = {
@@ -29,7 +29,7 @@ def local(ctx):
         'max_batch_delay': 100
     }
     try:
-        ret = LocalBench(bench_params, node_params).run(debug=False).result()
+        ret = LocalBench(bench_params, node_params).run(debug=True).result()
         print(ret)
     except BenchError as e:
         Print.error(e)

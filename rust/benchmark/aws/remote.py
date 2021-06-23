@@ -258,7 +258,7 @@ class Bench:
                 cmd = CommandMaker.run_worker(
                     PathMaker.key_file(i),
                     PathMaker.committee_file(),
-                    PathMaker.db_path(i),
+                    PathMaker.db_path(i, id),
                     PathMaker.parameters_file(),
                     id,  # The worker's id.
                     debug=debug

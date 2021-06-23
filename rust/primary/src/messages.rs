@@ -85,11 +85,13 @@ impl fmt::Debug for Header {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{}: B({}, {}, {:?}, {})",
+            "{}: B({}, {}, [{}], {})",
             self.id,
             self.author,
             self.round,
-            self.parents,
+            self.parents
+                .iter()
+                .fold(String::new(), |acc, x| format!("{}{}, ", acc, x)),
             self.payload.keys().map(|x| x.size()).sum::<usize>(),
         )
     }

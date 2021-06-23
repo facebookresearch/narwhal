@@ -1,6 +1,9 @@
 use crate::error::DagResult;
 use crate::header_waiter::WaiterMessage;
 use crate::messages::{Certificate, Header};
+use config::Committee;
+use crypto::Digest;
+use crypto::Hash as _;
 use std::collections::HashMap;
 use store::Store;
 use tokio::sync::mpsc::Sender;
@@ -14,10 +17,13 @@ pub struct Synchronizer {
     tx_header_waiter: Sender<WaiterMessage>,
     /// Send commands to the `CertificateWaiter`.
     tx_certificate_waiter: Sender<Certificate>,
+    /// The genesis and its digests.
+    genesis: Vec<(Digest, Certificate)>,
 }
 
 impl Synchronizer {
     pub fn new(
+        committee: &Committee,
         store: Store,
         tx_header_waiter: Sender<WaiterMessage>,
         tx_certificate_waiter: Sender<Certificate>,
@@ -26,6 +32,10 @@ impl Synchronizer {
             store,
             tx_header_waiter,
             tx_certificate_waiter,
+            genesis: Certificate::genesis(committee)
+                .into_iter()
+                .map(|x| (x.digest(), x))
+                .collect(),
         }
     }
 
@@ -70,6 +80,16 @@ impl Synchronizer {
         let mut missing = Vec::new();
         let mut parents = Vec::new();
         for digest in &header.parents {
+            if let Some(genesis) = self
+                .genesis
+                .iter()
+                .find(|(x, _)| x == digest)
+                .map(|(_, x)| x)
+            {
+                parents.push(genesis.clone());
+                continue;
+            }
+
             match self.store.read(digest.to_vec()).await? {
                 Some(certificate) => parents.push(bincode::deserialize(&certificate)?),
                 None => missing.push(digest.clone()),
@@ -91,6 +111,10 @@ impl Synchronizer {
     /// the `CertificateWaiter` which will trigger re-processing once we have all the missing data.
     pub async fn deliver_certificate(&mut self, certificate: &Certificate) -> DagResult<bool> {
         for digest in &certificate.header.parents {
+            if self.genesis.iter().find(|(x, _)| x == digest).is_some() {
+                continue;
+            }
+
             if self.store.read(digest.to_vec()).await?.is_none() {
                 self.tx_certificate_waiter
                     .send(certificate.clone())
