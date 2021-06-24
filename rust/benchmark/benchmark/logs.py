@@ -26,7 +26,7 @@ class LogParser:
         try:
             with Pool() as p:
                 results = p.map(self._parse_clients, clients)
-        except (ValueError, IndexError) as e:
+        except (ValueError, IndexError, AttributeError) as e:
             raise ParseError(f'Failed to parse clients\' logs: {e}')
         self.size, self.rate, self.start, misses, self.sent_samples \
             = zip(*results)
@@ -36,7 +36,7 @@ class LogParser:
         try:
             with Pool() as p:
                 results = p.map(self._parse_primaries, primaries)
-        except (ValueError, IndexError) as e:
+        except (ValueError, IndexError, AttributeError) as e:
             raise ParseError(f'Failed to parse nodes\' logs: {e}')
         proposals, commits, self.configs = zip(*results)
         self.proposals = self._merge_results([x.items() for x in proposals])
@@ -46,7 +46,7 @@ class LogParser:
         try:
             with Pool() as p:
                 results = p.map(self._parse_workers, workers)
-        except (ValueError, IndexError) as e:
+        except (ValueError, IndexError, AttributeError) as e:
             raise ParseError(f'Failed to parse workers\' logs: {e}')
         sizes, self.received_samples = zip(*results)
         self.sizes = {

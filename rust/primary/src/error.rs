@@ -40,7 +40,7 @@ pub enum DagError {
     #[error("Received message from unknown authority {0}")]
     UnknownAuthority(PublicKey),
 
-    #[error("Received more than one vote from {0}")]
+    #[error("Authority {0} appears more than once in quorum")]
     AuthorityReuse(PublicKey),
 
     #[error("Received unexpected vote fo header {0}")]
