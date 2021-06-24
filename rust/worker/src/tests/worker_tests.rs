@@ -24,7 +24,7 @@ async fn handle_clients_transactions() {
 
     // Spawn a network listener to receive our batch's digest.
     let primary_address = committee.primary(&name).unwrap().worker_to_primary;
-    let expected = bincode::serialize(&WorkerPrimaryMessage::OwnBatch(batch_digest(), id)).unwrap();
+    let expected = bincode::serialize(&WorkerPrimaryMessage::OurBatch(batch_digest(), id)).unwrap();
     let handle = listener(primary_address, Some(Bytes::from(expected)));
 
     // Spawn enough workers' listeners to acknowledge our batches.

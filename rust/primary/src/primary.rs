@@ -49,7 +49,7 @@ pub enum PrimaryWorkerMessage {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum WorkerPrimaryMessage {
     /// The worker indicates it sealed a new batch.
-    OwnBatch(Digest, WorkerId),
+    OurBatch(Digest, WorkerId),
     /// The worker indicates it received a batch's digest from another authority.
     OthersBatch(Digest, WorkerId),
 }
@@ -257,7 +257,7 @@ impl MessageHandler for WorkerReceiverHandler {
     ) -> Result<(), Box<dyn Error>> {
         // Deserialize and parse the message.
         match bincode::deserialize(&serialized).map_err(DagError::SerializationError)? {
-            WorkerPrimaryMessage::OwnBatch(digest, worker_id) => self
+            WorkerPrimaryMessage::OurBatch(digest, worker_id) => self
                 .tx_own_digests
                 .send((digest, worker_id))
                 .await

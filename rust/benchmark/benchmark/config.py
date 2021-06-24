@@ -200,10 +200,10 @@ class BenchParameters:
 
             self.nodes = [int(x) for x in nodes]
             self.workers = int(json['workers'])
-            if 'single_machine' in json:
-                self.single_machine = bool(json['single_machine'])
+            if 'collocate' in json:
+                self.collocate = bool(json['collocate'])
             else:
-                self.single_machine = True
+                self.collocate = True
             self.rate = [int(x) for x in rate]
             self.tx_size = int(json['tx_size'])
             self.faults = int(json['faults'])
