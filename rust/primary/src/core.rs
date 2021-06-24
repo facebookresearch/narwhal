@@ -299,9 +299,10 @@ impl Core {
     }
 
     fn sanitize_header(&mut self, header: &Header) -> DagResult<()> {
-        if self.gc_round > header.round {
-            return Ok(());
-        }
+        ensure!(
+            self.gc_round <= header.round,
+            DagError::TooOld(header.id.clone(), header.round)
+        );
 
         // Verify the header's signature.
         header.verify(&self.committee)?;
@@ -312,9 +313,10 @@ impl Core {
     }
 
     fn sanitize_vote(&mut self, vote: &Vote) -> DagResult<()> {
-        if self.current_header.round > vote.round {
-            return Ok(());
-        }
+        ensure!(
+            self.current_header.round <= vote.round,
+            DagError::TooOld(vote.digest(), vote.round)
+        );
 
         // Ensure we receive a vote on the expected header.
         ensure!(
@@ -325,20 +327,17 @@ impl Core {
         );
 
         // Verify the vote.
-        vote.verify(&self.committee)?;
-
-        Ok(())
+        vote.verify(&self.committee).map_err(DagError::from)
     }
 
     fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
-        if self.gc_round > certificate.round() {
-            return Ok(());
-        }
+        ensure!(
+            self.gc_round <= certificate.round(),
+            DagError::TooOld(certificate.digest(), certificate.round())
+        );
 
         // Verify the certificate (and the embedded header).
-        certificate.verify(&self.committee)?;
-
-        Ok(())
+        certificate.verify(&self.committee).map_err(DagError::from)
     }
 
     // Main loop listening to incoming messages.
@@ -389,6 +388,7 @@ impl Core {
                     error!("{}", e);
                     panic!("Storage failure: killing node.");
                 }
+                Err(e @ DagError::TooOld(..)) => debug!("{}", e),
                 Err(e) => warn!("{}", e),
             }
 

@@ -69,7 +69,9 @@ impl CertificatesAggregator {
         let origin = certificate.origin();
 
         // Ensure it is the first time this authority votes.
-        ensure!(self.used.insert(origin), DagError::AuthorityReuse(origin));
+        if !self.used.insert(origin) {
+            return Ok(None);
+        }
 
         self.certificates.push(certificate.digest());
         self.weight += committee.stake(&origin);

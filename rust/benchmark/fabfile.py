@@ -9,14 +9,14 @@ from aws.remote import Bench, BenchError
 
 
 @task
-def local(ctx, debug=False):
+def local(ctx, debug=True):
     ''' Run benchmarks on localhost '''
     bench_params = {
-        'nodes': 4,
+        'nodes': 7,
         'workers': 1,
-        'rate': 10_000,
+        'rate': 150_000,
         'tx_size': 512,
-        'faults': 1,
+        'faults': 0,
         'duration': 20,
     }
     node_params = {
@@ -54,7 +54,7 @@ def destroy(ctx):
 
 
 @task
-def start(ctx, max=1):
+def start(ctx, max=2):
     ''' Start at most `max` machines per data center '''
     try:
         InstanceManager.make().start_instances(max)
@@ -90,17 +90,17 @@ def install(ctx):
 
 
 @task
-def remote(ctx, debug=False):
+def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
-        'nodes': [10],
+        'nodes': [20],
         'workers': 1,
         'single_machine': True,
-        'rate': [100_000],
+        'rate': [140_000],
         'tx_size': 512,
-        'faults': 3,
+        'faults': 0,
         'duration': 300,
-        'runs': 1,
+        'runs': 2,
     }
     node_params = {
         'header_size': 1_000,

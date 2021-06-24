@@ -1,3 +1,4 @@
+use crate::primary::Round;
 use crypto::{CryptoError, Digest, PublicKey};
 use store::StoreError;
 use thiserror::Error;
@@ -40,7 +41,7 @@ pub enum DagError {
     #[error("Received message from unknown authority {0}")]
     UnknownAuthority(PublicKey),
 
-    #[error("Authority {0} appears more than once in quorum")]
+    #[error("Authority {0} appears in quorum more than once")]
     AuthorityReuse(PublicKey),
 
     #[error("Received unexpected vote fo header {0}")]
@@ -51,4 +52,7 @@ pub enum DagError {
 
     #[error("Parents of header {0} are not a quorum")]
     HeaderRequiresQuorum(Digest),
+
+    #[error("Message {0} (round {1}) too old")]
+    TooOld(Digest, Round),
 }

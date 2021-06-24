@@ -60,8 +60,9 @@ impl Header {
         }
 
         // Check the signature.
-        self.signature.verify(&self.id, &self.author)?;
-        Ok(())
+        self.signature
+            .verify(&self.id, &self.author)
+            .map_err(DagError::from)
     }
 }
 
@@ -137,8 +138,9 @@ impl Vote {
         );
 
         // Check the signature.
-        self.signature.verify(&self.digest(), &self.author)?;
-        Ok(())
+        self.signature
+            .verify(&self.digest(), &self.author)
+            .map_err(DagError::from)
     }
 }
 
