@@ -221,7 +221,7 @@ impl Committee {
             .workers
             .values()
             .cloned()
-            .map(|x| Ok(x))
+            .map(Ok)
             .collect()
     }
 
