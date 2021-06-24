@@ -86,7 +86,7 @@ class LogParser:
         return size, rate, start, misses, samples
 
     def _parse_primaries(self, log):
-        if search(r'(?:panic|Error)', log) is not None:
+        if search(r'(?:panicked|Error)', log) is not None:
             raise ParseError('Node(s) panicked')
 
         tmp = findall(r'\[(.*Z) .* Created B\d+\([^ ]+\) -> ([^ ]+=)', log)

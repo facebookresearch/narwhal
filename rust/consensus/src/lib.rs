@@ -278,12 +278,11 @@ impl Consensus {
                 let (digest, certificate) = match state
                     .dag
                     .get(&(x.round() - 1))
-                    .expect("We should have the whole history by now")
-                    .values()
-                    .find(|(x, _)| x == parent)
+                    .map(|x| x.values().find(|(x, _)| x == parent))
+                    .flatten()
                 {
                     Some(x) => x,
-                    None => continue, // We already ordered this parent (as well as his ancestors).
+                    None => continue, // We already ordered up to here.
                 };
 
                 // We skip the certificate if we (1) already processed it, (2) we reached the genesis, or (3) we
