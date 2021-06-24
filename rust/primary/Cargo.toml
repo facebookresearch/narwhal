@@ -24,5 +24,8 @@ store = { path = "../store" }
 config = { path = "../config" }
 network = { path = "../network" }
 
+[dev-dependencies]
+rand = "0.7.3"
+
 [features]
 benchmark = []

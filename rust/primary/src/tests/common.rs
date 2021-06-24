@@ -1,19 +1,22 @@
-use crate::batch_maker::{Batch, Transaction};
-use crate::worker::WorkerMessage;
+use crate::messages::{Certificate, Header};
 use bytes::Bytes;
 use config::{Authority, Committee, PrimaryAddresses, WorkerAddresses};
-use crypto::{generate_keypair, Digest, PublicKey, SecretKey};
-use ed25519_dalek::Digest as _;
-use ed25519_dalek::Sha512;
+use crypto::Hash as _;
+use crypto::{generate_keypair, PublicKey, SecretKey, Signature};
 use futures::sink::SinkExt as _;
 use futures::stream::StreamExt as _;
 use rand::rngs::StdRng;
 use rand::SeedableRng as _;
-use std::convert::TryInto as _;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+impl PartialEq for Header {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
 
 // Fixture
 pub fn keys() -> Vec<(PublicKey, SecretKey)> {
@@ -83,28 +86,22 @@ pub fn committee_with_base_port(base_port: u16) -> Committee {
 }
 
 // Fixture
-pub fn transaction() -> Transaction {
-    vec![0; 100]
-}
-
-// Fixture
-pub fn batch() -> Batch {
-    vec![transaction(), transaction()]
-}
-
-// Fixture
-pub fn serialized_batch() -> Vec<u8> {
-    let message = WorkerMessage::Batch(batch());
-    bincode::serialize(&message).unwrap()
-}
-
-// Fixture
-pub fn batch_digest() -> Digest {
-    Digest(
-        Sha512::digest(&serialized_batch()).as_slice()[..32]
-            .try_into()
-            .unwrap(),
-    )
+pub fn header() -> Header {
+    let (author, secret) = keys().pop().unwrap();
+    let header = Header {
+        author,
+        round: 1,
+        parents: Certificate::genesis(&committee())
+            .iter()
+            .map(|x| x.digest())
+            .collect(),
+        ..Header::default()
+    };
+    Header {
+        id: header.digest(),
+        signature: Signature::new(&header.digest(), &secret),
+        ..header
+    }
 }
 
 // Fixture
