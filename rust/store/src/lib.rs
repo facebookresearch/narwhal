@@ -1,4 +1,3 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;

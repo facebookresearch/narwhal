@@ -1,10 +1,9 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
 use crypto::Digest;
-use dag_core::committee::Committee;
-use dag_core::error::DagError;
-use dag_core::messages::*;
-use dag_core::types::*;
 use log::*;
+use primary::committee::Committee;
+use primary::error::DagError;
+use primary::messages::*;
+use primary::types::*;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -297,6 +296,12 @@ impl Consensus {
                         // This log is used to compute performance.
                         "Commit digest {:?} at commit time {}",
                         x.0, commit_time
+                    );
+                    info!(
+                        // This log is used to compute performance.
+                        "Committed B{}({:?})",
+                        block.round,
+                        x.0
                     );
                 }
             }

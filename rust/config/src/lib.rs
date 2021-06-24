@@ -1,7 +1,10 @@
-// Copyright (c) Facebook, Inc. and its affiliates.
-use crypto::PublicKey;
-use serde::Deserialize;
+use crypto::{generate_production_keypair, PublicKey, SecretKey};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::fs::{self, OpenOptions};
+use std::io::BufWriter;
+use std::io::Write as _;
 use std::net::SocketAddr;
 use thiserror::Error;
 
@@ -12,22 +15,59 @@ pub enum ConfigError {
 
     #[error("Unknown worker id {0}")]
     UnknownWorker(WorkerId),
+
+    #[error("Failed to read config file '{file}': {message}")]
+    ImportError { file: String, message: String },
+
+    #[error("Failed to write config file '{file}': {message}")]
+    ExportError { file: String, message: String },
+}
+
+pub trait Import: DeserializeOwned {
+    fn import(path: &str) -> Result<Self, ConfigError> {
+        let reader = || -> Result<Self, std::io::Error> {
+            let data = fs::read(path)?;
+            Ok(serde_json::from_slice(data.as_slice())?)
+        };
+        reader().map_err(|e| ConfigError::ImportError {
+            file: path.to_string(),
+            message: e.to_string(),
+        })
+    }
+}
+
+pub trait Export: Serialize {
+    fn export(&self, path: &str) -> Result<(), ConfigError> {
+        let writer = || -> Result<(), std::io::Error> {
+            let file = OpenOptions::new().create(true).write(true).open(path)?;
+            let mut writer = BufWriter::new(file);
+            let data = serde_json::to_string_pretty(self).unwrap();
+            writer.write_all(data.as_ref())?;
+            writer.write_all(b"\n")?;
+            Ok(())
+        };
+        writer().map_err(|e| ConfigError::ExportError {
+            file: path.to_string(),
+            message: e.to_string(),
+        })
+    }
 }
 
 pub type Stake = u32;
 pub type WorkerId = u32;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Parameters {
     /// The Minimum delay that the primary waits between generating two headers. Denominated in ms.
     pub min_header_delay: u64,
     /// The depth of the garbage collection (Denominated in number of rounds).
-    pub gc_depth: u32,
-    /// The delay after which the network retries to send messages. Denominated in ms.
-    pub network_retry_delay: u64,
+    pub gc_depth: u64,
     /// The delay after which the synchronizer retries to send sync requests.
     /// Denominated in ms.
     pub sync_retry_delay: u64,
+    /// Determine with how many nodes to sync when re-trying to send sync-request. These nodes
+    /// are picked at random from the committee.
+    pub sync_retry_nodes: usize,
     /// The maximum batch size. The workers seal a batch of transactions when it reaches this size.
     /// Denominated in bytes.
     pub max_batch_size: usize,
@@ -41,30 +81,32 @@ impl Default for Parameters {
         Self {
             min_header_delay: 0,
             gc_depth: 50,
-            network_retry_delay: 200,
             sync_retry_delay: 10_000,
+            sync_retry_nodes: 3,
             max_batch_size: 500_000,
             max_batch_delay: 100,
         }
     }
 }
 
+impl Import for Parameters {}
+
 #[derive(Clone, Deserialize)]
 pub struct PrimaryAddresses {
     /// Address to receive messages from other primaries (WAN).
-    pub primaries_address: SocketAddr,
+    pub primary_to_primary: SocketAddr,
     /// Address to receive messages from our workers (LAN).
-    pub workers_address: SocketAddr,
+    pub worker_to_primary: SocketAddr,
 }
 
 #[derive(Clone, Deserialize, Eq, Hash, PartialEq)]
 pub struct WorkerAddresses {
     /// Address to receive client transactions (WAN).
-    pub transactions_address: SocketAddr,
+    pub transactions: SocketAddr,
     /// Address to receive messages from other workers (WAN).
-    pub workers_address: SocketAddr,
+    pub worker_to_worker: SocketAddr,
     /// Address to receive messages from our primary (LAN).
-    pub primary_address: SocketAddr,
+    pub primary_to_worker: SocketAddr,
 }
 
 #[derive(Clone, Deserialize)]
@@ -81,6 +123,8 @@ pub struct Authority {
 pub struct Committee {
     pub authorities: BTreeMap<PublicKey, Authority>,
 }
+
+impl Import for Committee {}
 
 impl Committee {
     /// Returns the number of authorities.
@@ -119,11 +163,11 @@ impl Committee {
     }
 
     /// Returns the addresses of all primaries except `myself`.
-    pub fn others_primaries(&self, myself: &PublicKey) -> Vec<PrimaryAddresses> {
+    pub fn others_primaries(&self, myself: &PublicKey) -> Vec<(PublicKey, PrimaryAddresses)> {
         self.authorities
             .iter()
             .filter(|(name, _)| name != &myself)
-            .map(|(_, authority)| authority.primary.clone())
+            .map(|(name, authority)| (*name, authority.primary.clone()))
             .collect()
     }
 
@@ -143,17 +187,39 @@ impl Committee {
 
     /// Returns the addresses of all workers with a specific id except the ones of the authority
     /// specified by `myself`.
-    pub fn others_workers(&self, myself: &PublicKey, id: &WorkerId) -> Vec<WorkerAddresses> {
+    pub fn others_workers(
+        &self,
+        myself: &PublicKey,
+        id: &WorkerId,
+    ) -> Vec<(PublicKey, WorkerAddresses)> {
         self.authorities
             .iter()
             .filter(|(name, _)| name != &myself)
-            .filter_map(|(_, authority)| {
+            .filter_map(|(name, authority)| {
                 authority
                     .workers
                     .iter()
                     .find(|(worker_id, _)| worker_id == &id)
-                    .map(|(_, worker)| worker.clone())
+                    .map(|(_, addresses)| (*name, addresses.clone()))
             })
             .collect()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct KeyPair {
+    /// The node's public key (and identifier).
+    pub name: PublicKey,
+    /// The node's secret key.
+    pub secret: SecretKey,
+}
+
+impl Import for KeyPair {}
+impl Export for KeyPair {}
+
+impl KeyPair {
+    pub fn new() -> Self {
+        let (name, secret) = generate_production_keypair();
+        Self { name, secret }
     }
 }
