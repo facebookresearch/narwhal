@@ -277,7 +277,7 @@ impl Consensus {
                     .flatten()
                 {
                     Some(x) => x,
-                    None => continue, // We already ordered up to here.
+                    None => continue, // We already ordered or GC up to here.
                 };
 
                 // We skip the certificate if we (1) already processed it or (2) we reached a round that we already
