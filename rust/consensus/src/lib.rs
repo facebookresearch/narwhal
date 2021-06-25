@@ -37,17 +37,22 @@ impl State {
         }
     }
 
+    fn last_committed_round(&self) -> Round {
+        *self.last_committed.values().max().unwrap()
+    }
+
     /// Update and clean up internal state base on committed certificates.
-    fn update(&mut self, certificate: &Certificate) {
+    fn update(&mut self, certificate: &Certificate, gc_depth: Round) {
         self.last_committed
             .entry(certificate.origin())
             .and_modify(|r| *r = max(*r, certificate.round()))
             .or_insert_with(|| certificate.round());
 
+        let last_committed_round = self.last_committed_round();
         for (name, round) in &self.last_committed {
             self.dag.retain(|r, authorities| {
                 authorities.retain(|n, _| n != name || r >= round);
-                !authorities.is_empty()
+                !authorities.is_empty() && r + gc_depth >= last_committed_round
             });
         }
     }
@@ -56,6 +61,8 @@ impl State {
 pub struct Consensus {
     /// The committee information.
     committee: Committee,
+    /// The depth of the garbage collector.
+    gc_depth: Round,
 
     /// Receives new certificates from the primary. The primary should send us new certificates only
     /// if it already sent us its whole history.
@@ -72,6 +79,7 @@ pub struct Consensus {
 impl Consensus {
     pub fn spawn(
         committee: Committee,
+        gc_depth: Round,
         rx_primary: Receiver<Certificate>,
         tx_primary: Sender<Certificate>,
         tx_output: Sender<Certificate>,
@@ -79,6 +87,7 @@ impl Consensus {
         tokio::spawn(async move {
             Self {
                 committee: committee.clone(),
+                gc_depth,
                 rx_primary,
                 tx_primary,
                 tx_output,
@@ -97,6 +106,9 @@ impl Consensus {
         while let Some(certificate) = self.rx_primary.recv().await {
             debug!("Processing {:?}", certificate);
             let round = certificate.round();
+            if round + self.gc_depth < state.last_committed_round() {
+                continue;
+            }
 
             // Add the new certificate to the local storage.
             state
@@ -117,8 +129,7 @@ impl Consensus {
             // Get the certificate's digest of the leader of round r-2. If we already ordered this leader,
             // there is nothing to do.
             let leader_round = r - 2;
-            let last_committed_round = state.last_committed.values().max().unwrap();
-            if &leader_round <= last_committed_round {
+            if leader_round <= state.last_committed_round() {
                 continue;
             }
             let (leader_digest, leader) = match self.leader(leader_round, &state.dag) {
@@ -151,7 +162,7 @@ impl Consensus {
                 // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
                 for x in self.order_dag(leader, &state) {
                     // Update and clean up internal state.
-                    state.update(&x);
+                    state.update(&x, self.gc_depth);
 
                     // Add the certificate to the sequence.
                     sequence.push(x);
@@ -210,10 +221,12 @@ impl Consensus {
 
     /// Order the past leaders that we didn't already commit.
     fn order_leaders(&self, leader: &Certificate, state: &State) -> Vec<Certificate> {
-        let last_committed_round = state.last_committed.values().max().unwrap();
         let mut to_commit = vec![leader.clone()];
         let mut leader = leader;
-        for r in (last_committed_round + 2..leader.round()).rev().step_by(2) {
+        for r in (state.last_committed_round() + 2..leader.round())
+            .rev()
+            .step_by(2)
+        {
             // Get the certificate proposed by the previous leader.
             let (_, prev_leader) = match self.leader(r, &state.dag) {
                 Some(x) => x,
@@ -266,14 +279,13 @@ impl Consensus {
                     None => continue, // We already ordered up to here.
                 };
 
-                // We skip the certificate if we (1) already processed it or (2) we reached a round that we already 
+                // We skip the certificate if we (1) already processed it or (2) we reached a round that we already
                 // committed for this authority.
                 let mut skip = already_ordered.contains(&digest);
                 skip |= state
                     .last_committed
                     .get(&certificate.origin())
                     .map_or_else(|| false, |r| r == &certificate.round());
-
                 if !skip {
                     buffer.push(certificate);
                     already_ordered.insert(digest);

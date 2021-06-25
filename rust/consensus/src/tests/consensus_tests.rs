@@ -98,7 +98,13 @@ async fn commit_one() {
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
-    Consensus::spawn(mock_committee(), rx_waiter, tx_primary, tx_output);
+    Consensus::spawn(
+        mock_committee(),
+        /* gc_depth */ 50,
+        rx_waiter,
+        tx_primary,
+        tx_output,
+    );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
     // Feed all certificates to the consensus. Only the last certificate should trigger
@@ -137,7 +143,13 @@ async fn dead_node() {
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
-    Consensus::spawn(mock_committee(), rx_waiter, tx_primary, tx_output);
+    Consensus::spawn(
+        mock_committee(),
+        /* gc_depth */ 50,
+        rx_waiter,
+        tx_primary,
+        tx_output,
+    );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
     // Feed all certificates to the consensus.
@@ -219,7 +231,13 @@ async fn not_enough_support() {
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
-    Consensus::spawn(mock_committee(), rx_waiter, tx_primary, tx_output);
+    Consensus::spawn(
+        mock_committee(),
+        /* gc_depth */ 50,
+        rx_waiter,
+        tx_primary,
+        tx_output,
+    );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
     // Feed all certificates to the consensus. Only the last certificate should trigger
@@ -276,7 +294,13 @@ async fn missing_leader() {
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
-    Consensus::spawn(mock_committee(), rx_waiter, tx_primary, tx_output);
+    Consensus::spawn(
+        mock_committee(),
+        /* gc_depth */ 50,
+        rx_waiter,
+        tx_primary,
+        tx_output,
+    );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
     // Feed all certificates to the consensus. We should only commit upon receiving the last
