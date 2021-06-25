@@ -266,8 +266,8 @@ impl Consensus {
                     None => continue, // We already ordered up to here.
                 };
 
-                // We skip the certificate if we (1) already processed it, (2) we reached the genesis, or (3) we
-                // reached a round that we already committed for this authority.
+                // We skip the certificate if we (1) already processed it or (2) we reached a round that we already 
+                // committed for this authority.
                 let mut skip = already_ordered.contains(&digest);
                 skip |= state
                     .last_committed
