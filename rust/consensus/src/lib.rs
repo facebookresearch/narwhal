@@ -114,18 +114,17 @@ impl Consensus {
                 continue;
             }
 
-            // Get the certificate's digest of the leader of round r-2.
+            // Get the certificate's digest of the leader of round r-2. If we already ordered this leader,
+            // there is nothing to do.
             let leader_round = r - 2;
+            let last_committed_round = state.last_committed.values().max().unwrap();
+            if &leader_round <= last_committed_round {
+                continue;
+            }
             let (leader_digest, leader) = match self.leader(leader_round, &state.dag) {
                 Some(x) => x,
                 None => continue,
             };
-
-            // If we already ordered this leader, there is nothing to do.
-            let last_committed_round = state.last_committed.values().max().unwrap();
-            if &leader.round() <= last_committed_round {
-                continue;
-            }
 
             // Check if the leader has f+1 support from its children (ie. round r-1).
             let stake: Stake = state
@@ -148,8 +147,7 @@ impl Consensus {
             // Get an ordered list of past leaders that are linked to the current leader.
             debug!("Leader {:?} has enough support", leader);
             let mut sequence = Vec::new();
-            let ordered_leaders = self.order_leaders(leader, &state);
-            for leader in ordered_leaders.iter().rev() {
+            for leader in self.order_leaders(leader, &state).iter().rev() {
                 // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
                 for x in self.order_dag(leader, &state) {
                     // Update and clean up internal state.
