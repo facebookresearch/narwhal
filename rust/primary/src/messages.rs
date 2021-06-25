@@ -172,23 +172,17 @@ pub struct Certificate {
 
 impl Certificate {
     pub fn genesis(committee: &Committee) -> Vec<Self> {
-        let mut certificates = Vec::new();
-        let mut weight = 0;
-        for (name, authority) in committee.authorities.iter() {
-            let certificate = Self {
+        committee
+            .authorities
+            .keys()
+            .map(|name| Self {
                 header: Header {
                     author: *name,
                     ..Header::default()
                 },
                 ..Self::default()
-            };
-            certificates.push(certificate);
-            weight += authority.stake;
-            if weight >= committee.quorum_threshold() {
-                break;
-            }
-        }
-        certificates
+            })
+            .collect()
     }
 
     pub fn verify(&self, committee: &Committee) -> DagResult<()> {
