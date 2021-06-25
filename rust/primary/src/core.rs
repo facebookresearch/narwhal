@@ -325,7 +325,7 @@ impl Core {
         // Ensure we receive a vote on the expected header.
         ensure!(
             vote.id == self.current_header.id
-                && vote.origin == self.name
+                && vote.origin == self.current_header.author
                 && vote.round == self.current_header.round,
             DagError::UnexpectedVote(vote.id.clone())
         );

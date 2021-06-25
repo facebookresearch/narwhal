@@ -1,4 +1,4 @@
-use crate::messages::{Certificate, Header};
+use crate::messages::{Certificate, Header, Vote};
 use bytes::Bytes;
 use config::{Authority, Committee, PrimaryAddresses, WorkerAddresses};
 use crypto::Hash as _;
@@ -15,6 +15,12 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 impl PartialEq for Header {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
+    }
+}
+
+impl PartialEq for Vote {
+    fn eq(&self, other: &Self) -> bool {
+        self.digest() == other.digest()
     }
 }
 
@@ -105,7 +111,61 @@ pub fn header() -> Header {
 }
 
 // Fixture
-pub fn listener(address: SocketAddr, expected: Option<Bytes>) -> JoinHandle<()> {
+pub fn headers() -> Vec<Header> {
+    keys()
+        .into_iter()
+        .map(|(author, secret)| {
+            let header = Header {
+                author,
+                round: 1,
+                parents: Certificate::genesis(&committee())
+                    .iter()
+                    .map(|x| x.digest())
+                    .collect(),
+                ..Header::default()
+            };
+            Header {
+                id: header.digest(),
+                signature: Signature::new(&header.digest(), &secret),
+                ..header
+            }
+        })
+        .collect()
+}
+
+// Fixture
+pub fn votes(header: &Header) -> Vec<Vote> {
+    keys()
+        .into_iter()
+        .map(|(author, secret)| {
+            let vote = Vote {
+                id: header.id.clone(),
+                round: header.round,
+                origin: header.author,
+                author,
+                signature: Signature::default(),
+            };
+            Vote {
+                signature: Signature::new(&vote.digest(), &secret),
+                ..vote
+            }
+        })
+        .collect()
+}
+
+// Fixture
+pub fn certificate(header: &Header) -> Certificate {
+    Certificate {
+        header: header.clone(),
+        votes: votes(&header)
+            .into_iter()
+            .map(|x| (x.author, x.signature))
+            .collect(),
+    }
+}
+
+// Fixture
+pub fn listener(address: SocketAddr) -> JoinHandle<Bytes> {
     tokio::spawn(async move {
         let listener = TcpListener::bind(&address).await.unwrap();
         let (socket, _) = listener.accept().await.unwrap();
@@ -114,11 +174,9 @@ pub fn listener(address: SocketAddr, expected: Option<Bytes>) -> JoinHandle<()> 
         match reader.next().await {
             Some(Ok(received)) => {
                 writer.send(Bytes::from("Ack")).await.unwrap();
-                if let Some(expected) = expected {
-                    assert_eq!(received.freeze(), expected);
-                }
+                received.freeze()
             }
-            _ => assert!(false, "Failed to receive network message"),
+            _ => panic!("Failed to receive network message"),
         }
     })
 }
