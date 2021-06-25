@@ -99,13 +99,14 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
             Primary::spawn(
                 keypair,
                 committee.clone(),
-                parameters,
+                parameters.clone(),
                 store,
                 /* tx_consensus */ tx_new_certificates,
                 /* rx_consensus */ rx_feedback,
             );
             Consensus::spawn(
                 committee,
+                parameters.gc_depth,
                 /* rx_primary */ rx_new_certificates,
                 /* tx_primary */ tx_feedback,
                 tx_output,

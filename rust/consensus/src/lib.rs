@@ -16,6 +16,8 @@ type Dag = HashMap<Round, HashMap<PublicKey, (Digest, Certificate)>>;
 
 /// The state that needs to be persisted for crash-recovery.
 struct State {
+    /// The last committed round.
+    last_committed_round: Round,
     // Keeps the last committed round for each authority. This map is used to clean up the dag and
     // ensure we don't commit twice the same certificate.
     last_committed: HashMap<PublicKey, Round>,
@@ -32,13 +34,10 @@ impl State {
             .collect::<HashMap<_, _>>();
 
         Self {
+            last_committed_round: 0,
             last_committed: genesis.iter().map(|(x, (_, y))| (*x, y.round())).collect(),
             dag: [(0, genesis)].iter().cloned().collect(),
         }
-    }
-
-    fn last_committed_round(&self) -> Round {
-        *self.last_committed.values().max().unwrap()
     }
 
     /// Update and clean up internal state base on committed certificates.
@@ -48,7 +47,9 @@ impl State {
             .and_modify(|r| *r = max(*r, certificate.round()))
             .or_insert_with(|| certificate.round());
 
-        let last_committed_round = self.last_committed_round();
+        let last_committed_round = *self.last_committed.values().max().unwrap();
+        self.last_committed_round = last_committed_round;
+
         for (name, round) in &self.last_committed {
             self.dag.retain(|r, authorities| {
                 authorities.retain(|n, _| n != name || r >= round);
@@ -106,7 +107,7 @@ impl Consensus {
         while let Some(certificate) = self.rx_primary.recv().await {
             debug!("Processing {:?}", certificate);
             let round = certificate.round();
-            if round + self.gc_depth < state.last_committed_round() {
+            if round + self.gc_depth < state.last_committed_round {
                 continue;
             }
 
@@ -129,7 +130,7 @@ impl Consensus {
             // Get the certificate's digest of the leader of round r-2. If we already ordered this leader,
             // there is nothing to do.
             let leader_round = r - 2;
-            if leader_round <= state.last_committed_round() {
+            if leader_round <= state.last_committed_round {
                 continue;
             }
             let (leader_digest, leader) = match self.leader(leader_round, &state.dag) {
@@ -223,7 +224,7 @@ impl Consensus {
     fn order_leaders(&self, leader: &Certificate, state: &State) -> Vec<Certificate> {
         let mut to_commit = vec![leader.clone()];
         let mut leader = leader;
-        for r in (state.last_committed_round() + 2..leader.round())
+        for r in (state.last_committed_round + 2..leader.round())
             .rev()
             .step_by(2)
         {
