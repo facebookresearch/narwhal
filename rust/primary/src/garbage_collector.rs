@@ -48,11 +48,14 @@ impl GarbageCollector {
     }
 
     async fn run(&mut self) {
+        let mut last_committed_round = 0;
         while let Some(certificate) = self.rx_consensus.recv().await {
             // TODO [issue #9]: Re-include batch digests that have not been sequenced into our next block.
 
             let round = certificate.round();
-            if round % 10 == 0 {
+            if round > last_committed_round {
+                last_committed_round = round;
+                
                 // Trigger cleanup on the primary.
                 self.consensus_round.store(round, Ordering::Relaxed);
 
