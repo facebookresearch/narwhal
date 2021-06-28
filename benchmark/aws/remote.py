@@ -151,8 +151,7 @@ class Bench:
             f'(cd {self.settings.repo_name} && git checkout -f {self.settings.branch})',
             f'(cd {self.settings.repo_name} && git pull -f)',
             'source $HOME/.cargo/env',
-            # TODO: FIX PATHS
-            f'(cd {self.settings.repo_name}/rust/node && {CommandMaker.compile()})',
+            f'(cd {self.settings.repo_name}/node && {CommandMaker.compile()})',
             CommandMaker.alias_binaries(
                 f'./{self.settings.repo_name}/rust/target/release/'
             )

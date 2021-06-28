@@ -1,8 +1,0 @@
-[build]
-rustflags = [
-  "-C",
-  "force-frame-pointers=y",
-]
-
-[profile.release]
-debug = true
