@@ -1,3 +1,4 @@
+// Copyright(C) Facebook, Inc. and its affiliates.
 use config::{Committee, Stake};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
@@ -107,9 +108,6 @@ impl Consensus {
         while let Some(certificate) = self.rx_primary.recv().await {
             debug!("Processing {:?}", certificate);
             let round = certificate.round();
-            if round + self.gc_depth < state.last_committed_round {
-                continue;
-            }
 
             // Add the new certificate to the local storage.
             state
@@ -293,6 +291,9 @@ impl Consensus {
                 }
             }
         }
+
+        // Ensure we do not commit garbage collected certificates.
+        ordered.retain(|x| x.round() + self.gc_depth >= state.last_committed_round);
 
         // Ordering the output by round is not really necessary but it makes the commit sequence prettier.
         ordered.sort_by_key(|x| x.round());

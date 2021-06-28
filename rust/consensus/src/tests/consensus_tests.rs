@@ -1,3 +1,4 @@
+// Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
 use config::{Authority, PrimaryAddresses};
 use crypto::{generate_keypair, SecretKey};

@@ -1,3 +1,4 @@
+# Copyright(C) Facebook, Inc. and its affiliates.
 from json import load, JSONDecodeError
 
 

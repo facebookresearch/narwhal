@@ -1,3 +1,4 @@
+# Copyright(C) Facebook, Inc. and its affiliates.
 from re import findall, search, split
 import matplotlib.pyplot as plt
 from matplotlib.ticker import StrMethodFormatter
