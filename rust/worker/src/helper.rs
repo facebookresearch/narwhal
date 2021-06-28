@@ -1,6 +1,6 @@
-use crate::worker::WorkerMessage;
 use bytes::Bytes;
 use config::{Committee, WorkerId};
+use crypto::{Digest, PublicKey};
 use log::{error, warn};
 use network::SimpleSender;
 use store::Store;
@@ -19,7 +19,7 @@ pub struct Helper {
     /// The persistent storage.
     store: Store,
     /// Input channel to receive batch requests.
-    rx_request: Receiver<WorkerMessage>,
+    rx_request: Receiver<(Vec<Digest>, PublicKey)>,
     /// A network sender to send the batches to the other workers.
     network: SimpleSender,
 }
@@ -29,7 +29,7 @@ impl Helper {
         id: WorkerId,
         committee: Committee,
         store: Store,
-        rx_request: Receiver<WorkerMessage>,
+        rx_request: Receiver<(Vec<Digest>, PublicKey)>,
     ) {
         tokio::spawn(async move {
             Self {
@@ -45,9 +45,8 @@ impl Helper {
     }
 
     async fn run(&mut self) {
-        while let Some(WorkerMessage::BatchRequest(digests, origin)) = self.rx_request.recv().await
-        {
-            // TODO [issue #195]: Do some accounting to prevent bad nodes from monopolizing our resources.
+        while let Some((digests, origin)) = self.rx_request.recv().await {
+            // TODO [issue #7]: Do some accounting to prevent bad nodes from monopolizing our resources.
 
             // get the requestors address.
             let address = match self.committee.worker(&origin, &self.id) {

@@ -9,27 +9,28 @@ from aws.remote import Bench, BenchError
 
 
 @task
-def local(ctx):
+def local(ctx, debug=True):
     ''' Run benchmarks on localhost '''
     bench_params = {
-        'nodes': 4,
+        'nodes': 7,
         'workers': 1,
-        'rate': 10_000,
+        'rate': 150_000,
         'tx_size': 512,
-        'faults': 1,
+        'faults': 0,
         'duration': 20,
     }
     node_params = {
-        'min_header_delay': 0,
+        'header_size': 1_000,
+        'max_header_delay': 100,
         'gc_depth': 50,
         'sync_retry_delay': 10_000,
         'sync_retry_nodes': 3,
-        'max_batch_size': 500_000,
+        'batch_size': 500_000,
         'max_batch_delay': 100
     }
     try:
-        ret = LocalBench(bench_params, node_params).run(debug=False).result()
-        print(ret)
+        ret = LocalBench(bench_params, node_params).run(debug)
+        print(ret.result())
     except BenchError as e:
         Print.error(e)
 
@@ -53,7 +54,7 @@ def destroy(ctx):
 
 
 @task
-def start(ctx, max=1):
+def start(ctx, max=10):
     ''' Start at most `max` machines per data center '''
     try:
         InstanceManager.make().start_instances(max)
@@ -89,28 +90,29 @@ def install(ctx):
 
 
 @task
-def remote(ctx):
+def remote(ctx, debug=False):
     ''' Run benchmarks on AWS '''
     bench_params = {
-        'nodes': [10],
+        'nodes': [50],
         'workers': 1,
-        'single_machine': True,
-        'rate': [100_000],
+        'collocate': True,
+        'rate': [150_000],
         'tx_size': 512,
-        'faults': 3,
+        'faults': 0,
         'duration': 300,
-        'runs': 1,
+        'runs': 2,
     }
     node_params = {
-        'min_header_delay': 0,
+        'header_size': 1_000,
+        'max_header_delay': 200,
         'gc_depth': 50,
         'sync_retry_delay': 10_000,
         'sync_retry_nodes': 3,
-        'max_batch_size': 500_000,
+        'batch_size': 500_000,
         'max_batch_delay': 200
     }
     try:
-        Bench(ctx).run(bench_params, node_params, debug=False)
+        Bench(ctx).run(bench_params, node_params, debug)
     except BenchError as e:
         Print.error(e)
 
@@ -132,7 +134,7 @@ def plot(ctx):
 
 @task
 def kill(ctx):
-    ''' Stop any HotStuff execution on all machines '''
+    ''' Stop execution on all machines '''
     try:
         Bench(ctx).kill()
     except BenchError as e:

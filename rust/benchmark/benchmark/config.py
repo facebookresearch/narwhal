@@ -164,11 +164,12 @@ class NodeParameters:
     def __init__(self, json):
         inputs = []
         try:
-            inputs += [json['min_header_delay']]
+            inputs += [json['header_size']]
+            inputs += [json['max_header_delay']]
             inputs += [json['gc_depth']]
             inputs += [json['sync_retry_delay']]
             inputs += [json['sync_retry_nodes']]
-            inputs += [json['max_batch_size']]
+            inputs += [json['batch_size']]
             inputs += [json['max_batch_delay']]
         except KeyError as e:
             raise ConfigError(f'Malformed parameters: missing key {e}')
@@ -199,10 +200,10 @@ class BenchParameters:
 
             self.nodes = [int(x) for x in nodes]
             self.workers = int(json['workers'])
-            if 'single_machine' in json:
-                self.single_machine = bool(json['single_machine'])
+            if 'collocate' in json:
+                self.collocate = bool(json['collocate'])
             else:
-                self.single_machine = True
+                self.collocate = True
             self.rate = [int(x) for x in rate]
             self.tx_size = int(json['tx_size'])
             self.faults = int(json['faults'])

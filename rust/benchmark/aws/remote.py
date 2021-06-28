@@ -96,7 +96,7 @@ class Bench:
 
     def _select_hosts(self, bench_parameters):
         # Collocate the primary and its workers on the same machine.
-        if bench_parameters.single_machine:
+        if bench_parameters.collocate:
             nodes = max(bench_parameters.nodes)
 
             # Ensure there are enough hosts.
@@ -136,8 +136,8 @@ class Bench:
         output = c.run(cmd, hide=True)
         self._check_stderr(output)
 
-    def _update(self, hosts, single_machine):
-        if single_machine:
+    def _update(self, hosts, collocate):
+        if collocate:
             ips = list(set(hosts))
         else:
             ips = list(set([x for y in hosts for x in y]))
@@ -184,7 +184,7 @@ class Bench:
 
         names = [x.name for x in keys]
 
-        if bench_parameters.single_machine:
+        if bench_parameters.collocate:
             workers = bench_parameters.workers
             addresses = OrderedDict(
                 (x, [y] * (workers + 1)) for x, y in zip(names, hosts)
@@ -258,7 +258,7 @@ class Bench:
                 cmd = CommandMaker.run_worker(
                     PathMaker.key_file(i),
                     PathMaker.committee_file(),
-                    PathMaker.db_path(i),
+                    PathMaker.db_path(i, id),
                     PathMaker.parameters_file(),
                     id,  # The worker's id.
                     debug=debug
@@ -324,7 +324,7 @@ class Bench:
 
         # Update nodes.
         try:
-            self._update(selected_hosts, bench_parameters.single_machine)
+            self._update(selected_hosts, bench_parameters.collocate)
         except (GroupException, ExecutionError) as e:
             e = FabricError(e) if isinstance(e, GroupException) else e
             raise BenchError('Failed to update nodes', e)

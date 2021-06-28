@@ -1,189 +1,255 @@
-use super::committee::*;
-use super::error::*;
-use super::types::*;
-use crypto::{Digest, PublicKey, SecretKey, Signature};
-use ed25519_dalek::Digest as DalekDigest;
+use crate::error::{DagError, DagResult};
+use crate::primary::Round;
+use config::{Committee, WorkerId};
+use crypto::{Digest, Hash, PublicKey, Signature, SignatureService};
+use ed25519_dalek::Digest as _;
 use ed25519_dalek::Sha512;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::oneshot;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::convert::TryInto;
+use std::fmt;
 
-#[cfg(test)]
-#[path = "tests/messages_tests.rs"]
-pub mod messages_tests;
-
-/// This is the data structure the receive re-computes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockHeader {
-    /// The author of the block.
-    pub author: NodeID,
-    /// The round number of the block.
-    pub round: RoundNumber,
-    /// The digests of all transactions in that block.
-    pub transactions_digest: WorkersDigests,
-    /// Links to the parents of the block.
-    pub parents: BTreeSet<(NodeID, Digest)>,
-    /// User-defined metadata.
-    pub metadata: Metadata,
-    /// The current instance of the protocol.
-    pub instance_id: SequenceNumber,
-}
-pub const GC_DEPTH: u64 = 10;
-
-impl BlockHeader {
-    /// Verify that the block header is well formed.
-    pub fn check(&self, committee: &Committee) -> Result<(), DagError> {
-        dag_ensure!(
-            self.instance_id == committee.instance_id,
-            DagError::BadInstanceId
-        );
-        Ok(())
-    }
-
-    // Checks if a block has some digest as parent
-    pub fn has_parent(&self, digest: &Digest) -> bool {
-        for (_, parent) in &self.parents {
-            if *parent == *digest {
-                return true;
-            }
-        }
-        false
-    }
-
-    // Checks if a block has at least one parent from a set of digests
-    pub fn has_at_least_one_parent(&self, digests: &[Digest]) -> bool {
-        for digest in digests {
-            if self.has_parent(digest) {
-                return true;
-            }
-        }
-        false
-    }
-
-    // Checks that a set of digests corresponds to all parents of the block
-    pub fn has_all_parents(&self, cert_digests: &[Digest]) -> bool {
-        for (_, parent_digest) in &self.parents {
-            if !(*cert_digests).contains(parent_digest) {
-                return false;
-            }
-        }
-        //check that there are not additional certificates trailing
-        if self.parents.len() == cert_digests.len() {
-            return true;
-        }
-        false
-    }
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct Header {
+    pub author: PublicKey,
+    pub round: Round,
+    pub payload: BTreeMap<Digest, WorkerId>,
+    pub parents: BTreeSet<Digest>,
+    pub id: Digest,
+    pub signature: Signature,
 }
 
-/// This is the data structure the receive re-computes and stores.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignedBlockHeader {
-    /// The blockheader data.
-    pub data: Vec<u8>,
-    /// The digest of the blockheader.
-    pub digest: Digest,
-    /// A signature on the digest of the blockheader.
-    signature: Signature,
-}
-
-impl SignedBlockHeader {
+impl Header {
     pub async fn new(
-        header: BlockHeader,
-        signing_channel: &mut Sender<(Digest, oneshot::Sender<Signature>)>,
-    ) -> Result<Self, DagError> {
-        let data: Vec<u8> = bincode::serialize(&header)?;
-
-        let mut h: Sha512 = Sha512::new();
-        let mut hash: [u8; 64] = [0u8; 64];
-        let mut digest: [u8; 32] = [0u8; 32];
-        h.update(&data);
-        hash.copy_from_slice(h.finalize().as_slice());
-        digest.copy_from_slice(&hash[..32]);
-        let digest = Digest(digest);
-
-        let (sender, receiver) = oneshot::channel();
-        signing_channel
-            .send((digest.clone(), sender))
-            .await
-            .map_err(|e| DagError::ChannelError {
-                error: format!("{}", e),
-            })?;
-        match receiver.await {
-            Ok(signature) => Ok(Self {
-                data,
-                digest,
-                signature,
-            }),
-            Err(e) => dag_bail!(DagError::ChannelError {
-                error: format!("{}", e)
-            }),
+        author: PublicKey,
+        round: Round,
+        payload: BTreeMap<Digest, WorkerId>,
+        parents: BTreeSet<Digest>,
+        signature_service: &mut SignatureService,
+    ) -> Self {
+        let header = Self {
+            author,
+            round,
+            payload,
+            parents,
+            id: Digest::default(),
+            signature: Signature::default(),
+        };
+        let id = header.digest();
+        let signature = signature_service.request_signature(id.clone()).await;
+        Self {
+            id,
+            signature,
+            ..header
         }
     }
 
-    // Make a signed blockheader directly with a secret key.
-    // For debug / testing only.
-    pub fn debug_new(header: BlockHeader, secret_key: &SecretKey) -> Result<Self, DagError> {
-        let data: Vec<u8> = bincode::serialize(&header)?;
-        let digest = hash_vec(&data);
-        let signature = Signature::new(&digest, secret_key);
-        Ok(Self {
-            data,
-            digest,
-            signature,
-        })
-    }
+    pub fn verify(&self, committee: &Committee) -> DagResult<()> {
+        // Ensure the header id is well formed.
+        ensure!(self.digest() == self.id, DagError::InvalidHeaderId);
 
-    /// Verify the signature and return the deserialized block header.
-    pub fn check(&self, committee: &Committee) -> Result<BlockHeader, DagError> {
-        // Check the digest is good.
-        dag_ensure!(hash_vec(&self.data) == self.digest, DagError::BadDigest);
+        // Ensure the authority has voting rights.
+        let voting_rights = committee.stake(&self.author);
+        ensure!(voting_rights > 0, DagError::UnknownAuthority(self.author));
 
-        // Desirialize & Check instance ID
-        let header: BlockHeader = bincode::deserialize(&self.data[..])?;
-        header.check(committee)?;
+        // Ensure all worker ids are correct.
+        for worker_id in self.payload.values() {
+            committee
+                .worker(&self.author, &worker_id)
+                .map_err(|_| DagError::MalformedHeader(self.id.clone()))?;
+        }
 
-        // Chech author has some stake & signature is correct.
-        let weight = committee.stake(&header.author);
-        dag_ensure!(weight > 0, DagError::UnknownSigner);
-        self.signature.verify(&self.digest, &header.author)?;
-
-        Ok(header)
+        // Check the signature.
+        self.signature
+            .verify(&self.id, &self.author)
+            .map_err(DagError::from)
     }
 }
 
-impl PartialEq for SignedBlockHeader {
-    fn eq(&self, other: &SignedBlockHeader) -> bool {
-        self.digest == other.digest
+impl Hash for Header {
+    fn digest(&self) -> Digest {
+        let mut hasher = Sha512::new();
+        hasher.update(&self.author);
+        hasher.update(self.round.to_le_bytes());
+        for (x, y) in &self.payload {
+            hasher.update(x);
+            hasher.update(y.to_le_bytes());
+        }
+        for x in &self.parents {
+            hasher.update(x);
+        }
+        Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SyncTxInfo {
-    pub digest: Digest,
-    pub shard_id: ShardID,
+impl fmt::Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "{}: B{}({}, {})",
+            self.id,
+            self.round,
+            self.author,
+            self.payload.keys().map(|x| x.size()).sum::<usize>(),
+        )
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum WorkerChannelType {
-    Transaction,
-    Worker,
+impl fmt::Display for Header {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "B{}({})", self.round, self.author)
+    }
 }
 
-/// The messages sent by the primary to its workers.
-#[derive(Debug, Serialize, Deserialize)]
-pub enum PrimaryWorkerMessage {
-    /// The primary indicates that the worker need to sync the target missing batches.
-    Synchronize(Vec<Digest>, /* target */ PublicKey),
-    /// The primary indicates a round update.
-    Cleanup(RoundNumber),
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Vote {
+    pub id: Digest,
+    pub round: Round,
+    pub origin: PublicKey,
+    pub author: PublicKey,
+    pub signature: Signature,
 }
 
-/// The messages sent by the workers to their primary.
-#[derive(Debug, Serialize, Deserialize)]
-pub enum WorkerPrimaryMessage {
-    /// The worker indicates it sealed a new batch.
-    OwnBatch(ShardID, Digest),
-    /// The worker indicates it received a batch's digest from another authority.
-    OthersBatch(ShardID, Digest),
+impl Vote {
+    pub async fn new(
+        header: &Header,
+        author: &PublicKey,
+        signature_service: &mut SignatureService,
+    ) -> Self {
+        let vote = Self {
+            id: header.id.clone(),
+            round: header.round,
+            origin: header.author,
+            author: *author,
+            signature: Signature::default(),
+        };
+        let signature = signature_service.request_signature(vote.digest()).await;
+        Self { signature, ..vote }
+    }
+
+    pub fn verify(&self, committee: &Committee) -> DagResult<()> {
+        // Ensure the authority has voting rights.
+        ensure!(
+            committee.stake(&self.author) > 0,
+            DagError::UnknownAuthority(self.author)
+        );
+
+        // Check the signature.
+        self.signature
+            .verify(&self.digest(), &self.author)
+            .map_err(DagError::from)
+    }
+}
+
+impl Hash for Vote {
+    fn digest(&self) -> Digest {
+        let mut hasher = Sha512::new();
+        hasher.update(&self.id);
+        hasher.update(self.round.to_le_bytes());
+        hasher.update(&self.origin);
+        Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
+    }
+}
+
+impl fmt::Debug for Vote {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "{}: V{}({}, {})",
+            self.digest(),
+            self.round,
+            self.author,
+            self.id
+        )
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct Certificate {
+    pub header: Header,
+    pub votes: Vec<(PublicKey, Signature)>,
+}
+
+impl Certificate {
+    pub fn genesis(committee: &Committee) -> Vec<Self> {
+        committee
+            .authorities
+            .keys()
+            .map(|name| Self {
+                header: Header {
+                    author: *name,
+                    ..Header::default()
+                },
+                ..Self::default()
+            })
+            .collect()
+    }
+
+    pub fn verify(&self, committee: &Committee) -> DagResult<()> {
+        // Genesis certificates are always valid.
+        if Self::genesis(committee).contains(self) {
+            return Ok(());
+        }
+
+        // Check the embedded header.
+        self.header.verify(committee)?;
+
+        // Ensure the certificate has a quorum.
+        let mut weight = 0;
+        let mut used = HashSet::new();
+        for (name, _) in self.votes.iter() {
+            ensure!(!used.contains(name), DagError::AuthorityReuse(*name));
+            let voting_rights = committee.stake(name);
+            ensure!(voting_rights > 0, DagError::UnknownAuthority(*name));
+            used.insert(*name);
+            weight += voting_rights;
+        }
+        ensure!(
+            weight >= committee.quorum_threshold(),
+            DagError::CertificateRequiresQuorum
+        );
+
+        // Check the signatures.
+        Signature::verify_batch(&self.digest(), &self.votes).map_err(DagError::from)
+    }
+
+    pub fn round(&self) -> Round {
+        self.header.round
+    }
+
+    pub fn origin(&self) -> PublicKey {
+        self.header.author
+    }
+}
+
+impl Hash for Certificate {
+    fn digest(&self) -> Digest {
+        let mut hasher = Sha512::new();
+        hasher.update(&self.header.id);
+        hasher.update(self.round().to_le_bytes());
+        hasher.update(&self.origin());
+        Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
+    }
+}
+
+impl fmt::Debug for Certificate {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "{}: C{}({}, {})",
+            self.digest(),
+            self.round(),
+            self.origin(),
+            self.header.id
+        )
+    }
+}
+
+impl PartialEq for Certificate {
+    fn eq(&self, other: &Self) -> bool {
+        let mut ret = self.header.id == other.header.id;
+        ret &= self.round() == other.round();
+        ret &= self.origin() == other.origin();
+        ret
+    }
 }

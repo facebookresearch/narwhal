@@ -1,22 +1,20 @@
-#![recursion_limit = "1024"]
-
 #[macro_use]
-extern crate failure;
-extern crate base64;
-extern crate ed25519_dalek;
-extern crate rstest;
+mod error;
+mod aggregators;
+mod certificate_waiter;
+mod core;
+mod garbage_collector;
+mod header_waiter;
+mod helper;
+mod messages;
+mod payload_receiver;
+mod primary;
+mod proposer;
+mod synchronizer;
 
-#[macro_use]
-pub mod error;
-pub mod committee;
-pub mod manage_primary;
-pub mod messages;
-pub mod primary;
-pub mod primary_net;
-pub mod processor;
-mod sync_driver;
-pub mod sync_server;
-pub mod synchronizer;
-pub mod types;
+#[cfg(test)]
+#[path = "tests/common.rs"]
+mod common;
 
-pub use crate::messages::{PrimaryWorkerMessage, WorkerPrimaryMessage};
+pub use crate::messages::{Certificate, Header};
+pub use crate::primary::{Primary, PrimaryWorkerMessage, Round, WorkerPrimaryMessage};

@@ -19,6 +19,7 @@ async fn wait_for_quorum() {
     // Make a batch.
     let message = WorkerMessage::Batch(batch());
     let serialized = bincode::serialize(&message).unwrap();
+    let expected = Bytes::from(serialized.clone());
 
     // Spawn enough listeners to acknowledge our batches.
     let mut names = Vec::new();
@@ -26,8 +27,7 @@ async fn wait_for_quorum() {
     let mut listener_handles = Vec::new();
     for (name, address) in committee.others_workers(&myself, /* id */ &0) {
         let address = address.worker_to_worker;
-        let expected = Bytes::from(serialized.clone());
-        let handle = listener(address, Some(expected));
+        let handle = listener(address, Some(expected.clone()));
         names.push(name);
         addresses.push(address);
         listener_handles.push(handle);

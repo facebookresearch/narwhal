@@ -9,8 +9,7 @@ use bytes::Bytes;
 use config::{Committee, Parameters, WorkerId};
 use crypto::{Digest, PublicKey};
 use futures::sink::SinkExt as _;
-use log::error;
-use log::info;
+use log::{error, info, warn};
 use network::{MessageHandler, Receiver, Writer};
 use primary::PrimaryWorkerMessage;
 use serde::{Deserialize, Serialize};
@@ -155,7 +154,7 @@ impl Worker {
         // (in a reliable manner) the batches to all other workers that share the same `id` as us. Finally, it
         // gathers the 'cancel handlers' of the messages and send them to the `QuorumWaiter`.
         BatchMaker::spawn(
-            self.parameters.max_batch_size,
+            self.parameters.batch_size,
             self.parameters.max_batch_delay,
             /* rx_transaction */ rx_batch_maker,
             /* tx_message */ tx_quorum_waiter,
@@ -179,7 +178,6 @@ impl Worker {
         // The `Processor` hashes and stores the batch. It then forwards the batch's digest to the `PrimaryConnector`
         // that will send it to our primary machine.
         Processor::spawn(
-            self.name,
             self.id,
             self.store.clone(),
             /* rx_batch */ rx_processor,
@@ -225,7 +223,6 @@ impl Worker {
         // This `Processor` hashes and stores the batches we receive from the other workers. It then forwards the
         // batch's digest to the `PrimaryConnector` that will send it to our primary.
         Processor::spawn(
-            self.name,
             self.id,
             self.store.clone(),
             /* rx_batch */ rx_processor,
@@ -264,7 +261,7 @@ impl MessageHandler for TxReceiverHandler {
 /// Defines how the network receiver handles incoming workers messages.
 #[derive(Clone)]
 struct WorkerReceiverHandler {
-    tx_helper: Sender<WorkerMessage>,
+    tx_helper: Sender<(Vec<Digest>, PublicKey)>,
     tx_processor: Sender<SerializedBatchMessage>,
 }
 
@@ -275,17 +272,18 @@ impl MessageHandler for WorkerReceiverHandler {
         let _ = writer.send(Bytes::from("Ack")).await;
 
         // Deserialize and parse the message.
-        match bincode::deserialize(&serialized)? {
-            WorkerMessage::Batch(..) => self
+        match bincode::deserialize(&serialized) {
+            Ok(WorkerMessage::Batch(..)) => self
                 .tx_processor
                 .send(serialized.to_vec())
                 .await
                 .expect("Failed to send batch"),
-            request @ WorkerMessage::BatchRequest(..) => self
+            Ok(WorkerMessage::BatchRequest(missing, requestor)) => self
                 .tx_helper
-                .send(request)
+                .send((missing, requestor))
                 .await
                 .expect("Failed to send batch request"),
+            Err(e) => warn!("Serialization error: {}", e),
         }
         Ok(())
     }

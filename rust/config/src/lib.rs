@@ -1,4 +1,5 @@
 use crypto::{generate_production_keypair, PublicKey, SecretKey};
+use log::info;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -58,8 +59,12 @@ pub type WorkerId = u32;
 
 #[derive(Deserialize, Clone)]
 pub struct Parameters {
-    /// The Minimum delay that the primary waits between generating two headers. Denominated in ms.
-    pub min_header_delay: u64,
+    /// The preferred header size. The primary creates a new header when it has enough parents and
+    /// enough batches' digests to reach `header_size`. Denominated in bytes.
+    pub header_size: usize,
+    /// The maximum delay that the primary waits between generating two headers, even if the header
+    /// did not reach `max_header_size`. Denominated in ms.
+    pub max_header_delay: u64,
     /// The depth of the garbage collection (Denominated in number of rounds).
     pub gc_depth: u64,
     /// The delay after which the synchronizer retries to send sync requests.
@@ -68,9 +73,9 @@ pub struct Parameters {
     /// Determine with how many nodes to sync when re-trying to send sync-request. These nodes
     /// are picked at random from the committee.
     pub sync_retry_nodes: usize,
-    /// The maximum batch size. The workers seal a batch of transactions when it reaches this size.
+    /// The preferred batch size. The workers seal a batch of transactions when it reaches this size.
     /// Denominated in bytes.
-    pub max_batch_size: usize,
+    pub batch_size: usize,
     /// The delay after which the workers seal a batch of transactions, even if `max_batch_size`
     /// is not reached. Denominated in ms.
     pub max_batch_delay: u64,
@@ -79,17 +84,30 @@ pub struct Parameters {
 impl Default for Parameters {
     fn default() -> Self {
         Self {
-            min_header_delay: 0,
+            header_size: 1_000,
+            max_header_delay: 100,
             gc_depth: 50,
-            sync_retry_delay: 10_000,
+            sync_retry_delay: 5_000,
             sync_retry_nodes: 3,
-            max_batch_size: 500_000,
+            batch_size: 500_000,
             max_batch_delay: 100,
         }
     }
 }
 
 impl Import for Parameters {}
+
+impl Parameters {
+    pub fn log(&self) {
+        info!("Header size set to {} B", self.header_size);
+        info!("Max header delay set to {} ms", self.max_header_delay);
+        info!("Garbage collection depth set to {} rounds", self.gc_depth);
+        info!("Sync retry delay set to {} ms", self.sync_retry_delay);
+        info!("Sync retry nodes set to {} nodes", self.sync_retry_nodes);
+        info!("Batch size set to {} B", self.batch_size);
+        info!("Max batch delay set to {} ms", self.max_batch_delay);
+    }
+}
 
 #[derive(Clone, Deserialize)]
 pub struct PrimaryAddresses {
@@ -146,12 +164,20 @@ impl Committee {
             .collect()
     }
 
-    /// Returns the stake required to reach a quorum.
+    /// Returns the stake required to reach a quorum (2f+1).
     pub fn quorum_threshold(&self) -> Stake {
         // If N = 3f + 1 + k (0 <= k < 3)
         // then (2 N + 3) / 3 = 2f + 1 + (2k + 2)/3 = 2f + 1 + k = N - f
         let total_votes: Stake = self.authorities.values().map(|x| x.stake).sum();
         2 * total_votes / 3 + 1
+    }
+
+    /// Returns the stake required to reach availability (f+1).
+    pub fn validity_threshold(&self) -> Stake {
+        // If N = 3f + 1 + k (0 <= k < 3)
+        // then (N + 2) / 3 = f + 1 + k/3 = f + 1
+        let total_votes: Stake = self.authorities.values().map(|x| x.stake).sum();
+        (total_votes + 2) / 3
     }
 
     /// Returns the primary addresses of the target primary.
@@ -183,6 +209,20 @@ impl Committee {
             .find(|(worker_id, _)| worker_id == &id)
             .map(|(_, worker)| worker.clone())
             .ok_or_else(|| ConfigError::NotInCommittee(*to))
+    }
+
+    /// Returns the addresses of all our workers.
+    pub fn our_workers(&self, myself: &PublicKey) -> Result<Vec<WorkerAddresses>, ConfigError> {
+        self.authorities
+            .iter()
+            .find(|(name, _)| name == &myself)
+            .map(|(_, authority)| authority)
+            .ok_or_else(|| ConfigError::NotInCommittee(*myself))?
+            .workers
+            .values()
+            .cloned()
+            .map(Ok)
+            .collect()
     }
 
     /// Returns the addresses of all workers with a specific id except the ones of the authority
@@ -221,5 +261,11 @@ impl KeyPair {
     pub fn new() -> Self {
         let (name, secret) = generate_production_keypair();
         Self { name, secret }
+    }
+}
+
+impl Default for KeyPair {
+    fn default() -> Self {
+        Self::new()
     }
 }

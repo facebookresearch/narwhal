@@ -30,8 +30,7 @@ async fn batch_reply() {
 
     // Send a batch request.
     let digests = vec![batch_digest()];
-    let message = WorkerMessage::BatchRequest(digests, requestor);
-    tx_request.send(message).await.unwrap();
+    tx_request.send((digests, requestor)).await.unwrap();
 
     // Ensure the requestor received the batch (ie. it did not panic).
     assert!(handle.await.is_ok());

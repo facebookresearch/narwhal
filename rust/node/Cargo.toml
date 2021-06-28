@@ -24,7 +24,7 @@ worker = { path = "../worker" }
 consensus = { path = "../consensus" }
 
 [features]
-benchmark = ["worker/benchmark"]
+benchmark = ["worker/benchmark", "primary/benchmark", "consensus/benchmark"]
 
 [[bin]]         
 name = "benchmark_client"   

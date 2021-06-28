@@ -1,19 +1,28 @@
-use crate::batch_maker::{Batch, Transaction};
-use crate::worker::WorkerMessage;
+use crate::messages::{Certificate, Header, Vote};
 use bytes::Bytes;
 use config::{Authority, Committee, PrimaryAddresses, WorkerAddresses};
-use crypto::{generate_keypair, Digest, PublicKey, SecretKey};
-use ed25519_dalek::Digest as _;
-use ed25519_dalek::Sha512;
+use crypto::Hash as _;
+use crypto::{generate_keypair, PublicKey, SecretKey, Signature};
 use futures::sink::SinkExt as _;
 use futures::stream::StreamExt as _;
 use rand::rngs::StdRng;
 use rand::SeedableRng as _;
-use std::convert::TryInto as _;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+impl PartialEq for Header {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl PartialEq for Vote {
+    fn eq(&self, other: &Self) -> bool {
+        self.digest() == other.digest()
+    }
+}
 
 // Fixture
 pub fn keys() -> Vec<(PublicKey, SecretKey)> {
@@ -83,32 +92,80 @@ pub fn committee_with_base_port(base_port: u16) -> Committee {
 }
 
 // Fixture
-pub fn transaction() -> Transaction {
-    vec![0; 100]
+pub fn header() -> Header {
+    let (author, secret) = keys().pop().unwrap();
+    let header = Header {
+        author,
+        round: 1,
+        parents: Certificate::genesis(&committee())
+            .iter()
+            .map(|x| x.digest())
+            .collect(),
+        ..Header::default()
+    };
+    Header {
+        id: header.digest(),
+        signature: Signature::new(&header.digest(), &secret),
+        ..header
+    }
 }
 
 // Fixture
-pub fn batch() -> Batch {
-    vec![transaction(), transaction()]
+pub fn headers() -> Vec<Header> {
+    keys()
+        .into_iter()
+        .map(|(author, secret)| {
+            let header = Header {
+                author,
+                round: 1,
+                parents: Certificate::genesis(&committee())
+                    .iter()
+                    .map(|x| x.digest())
+                    .collect(),
+                ..Header::default()
+            };
+            Header {
+                id: header.digest(),
+                signature: Signature::new(&header.digest(), &secret),
+                ..header
+            }
+        })
+        .collect()
 }
 
 // Fixture
-pub fn serialized_batch() -> Vec<u8> {
-    let message = WorkerMessage::Batch(batch());
-    bincode::serialize(&message).unwrap()
+pub fn votes(header: &Header) -> Vec<Vote> {
+    keys()
+        .into_iter()
+        .map(|(author, secret)| {
+            let vote = Vote {
+                id: header.id.clone(),
+                round: header.round,
+                origin: header.author,
+                author,
+                signature: Signature::default(),
+            };
+            Vote {
+                signature: Signature::new(&vote.digest(), &secret),
+                ..vote
+            }
+        })
+        .collect()
 }
 
 // Fixture
-pub fn batch_digest() -> Digest {
-    Digest(
-        Sha512::digest(&serialized_batch()).as_slice()[..32]
-            .try_into()
-            .unwrap(),
-    )
+pub fn certificate(header: &Header) -> Certificate {
+    Certificate {
+        header: header.clone(),
+        votes: votes(&header)
+            .into_iter()
+            .map(|x| (x.author, x.signature))
+            .collect(),
+    }
 }
 
 // Fixture
-pub fn listener(address: SocketAddr, expected: Option<Bytes>) -> JoinHandle<()> {
+pub fn listener(address: SocketAddr) -> JoinHandle<Bytes> {
     tokio::spawn(async move {
         let listener = TcpListener::bind(&address).await.unwrap();
         let (socket, _) = listener.accept().await.unwrap();
@@ -117,11 +174,9 @@ pub fn listener(address: SocketAddr, expected: Option<Bytes>) -> JoinHandle<()> 
         match reader.next().await {
             Some(Ok(received)) => {
                 writer.send(Bytes::from("Ack")).await.unwrap();
-                if let Some(expected) = expected {
-                    assert_eq!(received.freeze(), expected);
-                }
+                received.freeze()
             }
-            _ => assert!(false, "Failed to receive network message"),
+            _ => panic!("Failed to receive network message"),
         }
     })
 }
