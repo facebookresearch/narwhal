@@ -64,7 +64,7 @@ async fn read_notify() {
     let handle = tokio::spawn(async move {
         match store_copy.notify_read(key_copy).await {
             Ok(v) => assert_eq!(v, value_copy),
-            _ => assert!(false),
+            _ => panic!("Failed to read from store"),
         }
     });
 
