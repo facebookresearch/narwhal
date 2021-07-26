@@ -113,13 +113,16 @@ impl Proposer {
         loop {
             // Check if we can propose a new header. We propose a new header when one of the following
             // conditions is met:
-            // 1. We have a quorum of certificates from the previous round and enough batches' digests;
+            // 1. We have a quorum of certificates from the previous round and enough batches' digests
+            // and at least one certificate references the leader of the previous round;
             // 2. We have a quorum of certificates from the previous round and the specified maximum
             // inter-header delay has passed.
             let enough_parents = !self.last_parents.is_empty();
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
-            if (timer_expired || enough_digests) && enough_parents {
+
+            // For simplicity just always wait delta
+            if enough_parents && enough_digests && timer_expired {
                 // Make a new header.
                 self.make_header().await;
                 self.payload_size = 0;

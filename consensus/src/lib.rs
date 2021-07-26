@@ -121,13 +121,13 @@ impl Consensus {
             let r = round - 1;
 
             // We only elect leaders for even round numbers.
-            if r % 2 != 0 || r < 4 {
+            if r % 2 == 0 || r < 2 {
                 continue;
             }
 
-            // Get the certificate's digest of the leader of round r-2. If we already ordered this leader,
+            // Get the certificate's digest of the leader of round r-1. If we already ordered this leader,
             // there is nothing to do.
-            let leader_round = r - 2;
+            let leader_round = r-1;
             if leader_round <= state.last_committed_round {
                 continue;
             }
@@ -136,10 +136,10 @@ impl Consensus {
                 None => continue,
             };
 
-            // Check if the leader has f+1 support from its children (ie. round r-1).
+            // Check if the leader has 2f+1 support from its children (ie. round r-1).
             let stake: Stake = state
                 .dag
-                .get(&(r - 1))
+                .get(&(r))
                 .expect("We should have the whole history by now")
                 .values()
                 .filter(|(_, x)| x.header.parents.contains(&leader_digest))
@@ -149,7 +149,7 @@ impl Consensus {
             // If it is the case, we can commit the leader. But first, we need to recursively go back to
             // the last committed leader, and commit all preceding leaders in the right order. Committing
             // a leader block means committing all its dependencies.
-            if stake < self.committee.validity_threshold() {
+            if stake < self.committee.quorum_threshold() {
                 debug!("Leader {:?} does not have enough support", leader);
                 continue;
             }
@@ -241,7 +241,7 @@ impl Consensus {
         to_commit
     }
 
-    /// Checks if there is a path between two leaders.
+    /// Checks if there is are f+1 paths between two leaders.
     fn linked(&self, leader: &Certificate, prev_leader: &Certificate, dag: &Dag) -> bool {
         let mut parents = vec![leader];
         for r in (prev_leader.round()..leader.round()).rev() {
@@ -253,7 +253,15 @@ impl Consensus {
                 .map(|(_, certificate)| certificate)
                 .collect();
         }
-        parents.contains(&prev_leader)
+
+        let mut count = 0;
+        for p in parents.iter() {
+            if p.eq(&prev_leader) {
+                count = count + 1;
+            }
+        }
+        //parents.contains(&prev_leader)
+        count >= self.committee.validity_threshold()
     }
 
     /// Flatten the dag referenced by the input certificate. This is a classic depth-first search (pre-order):
