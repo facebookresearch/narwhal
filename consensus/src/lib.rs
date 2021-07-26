@@ -117,10 +117,10 @@ impl Consensus {
                 .insert(certificate.origin(), (certificate.digest(), certificate));
 
             // Try to order the dag to commit. Start from the highest round for which we have at least
-            // 2f+1 certificates. This is because we need them to reveal the common coin.
+            // 2f+1 certificates. This is because we need them to decide whether the commit rule is satisifed.
             let r = round - 1;
 
-            // We only elect leaders for even round numbers.
+            // We only elect leaders for even round numbers, and the leader round is r-1 so we skip even rounds so r-1 is even.
             if r % 2 == 0 || r < 2 {
                 continue;
             }
@@ -136,7 +136,7 @@ impl Consensus {
                 None => continue,
             };
 
-            // Check if the leader has 2f+1 support from its children (ie. round r-1).
+            // Check if the leader has 2f+1 support from its children (ie. round r).
             let stake: Stake = state
                 .dag
                 .get(&(r))
@@ -232,7 +232,7 @@ impl Consensus {
                 None => continue,
             };
 
-            // Check whether there is a path between the last two leaders.
+            // Check whether there are f+1 paths between the last two leaders.
             if self.linked(leader, prev_leader, &state.dag) {
                 to_commit.push(prev_leader.clone());
                 leader = prev_leader;
@@ -254,13 +254,13 @@ impl Consensus {
                 .collect();
         }
 
+        // We check if there are f+1 instances of prev_leader in the parents to determine if there are f+1 unique paths
         let mut count = 0;
         for p in parents.iter() {
             if p.eq(&prev_leader) {
                 count = count + 1;
             }
         }
-        //parents.contains(&prev_leader)
         count >= self.committee.validity_threshold()
     }
 

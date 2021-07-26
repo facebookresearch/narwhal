@@ -83,16 +83,16 @@ fn make_certificates(
 // the leader of round 2.
 #[tokio::test]
 async fn commit_one() {
-    // Make certificates for rounds 1 to 4.
+    // Make certificates for rounds 1 to 3.
     let keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     let genesis = Certificate::genesis(&mock_committee())
         .iter()
         .map(|x| x.digest())
         .collect::<BTreeSet<_>>();
-    let (mut certificates, next_parents) = make_certificates(1, 4, &genesis, &keys);
+    let (mut certificates, next_parents) = make_certificates(1, 3, &genesis, &keys);
 
-    // Make one certificate with round 5 to trigger the commits.
-    let (_, certificate) = mock_certificate(keys[0], 5, next_parents);
+    // Make one certificate with round 4 to trigger the commits.
+    let (_, certificate) = mock_certificate(keys[0], 4, next_parents);
     certificates.push_back(certificate);
 
     // Spawn the consensus engine and sink the primary channel.
@@ -122,6 +122,51 @@ async fn commit_one() {
     }
     let certificate = rx_output.recv().await.unwrap();
     assert_eq!(certificate.round(), 2);
+}
+
+// Run for 4 dag rounds starting with round 3 in ideal conditions (all nodes reference all other nodes). We should commit
+// the leader of round 4.
+#[tokio::test]
+async fn commit_two() {
+    // Make certificates for rounds 1 to 5.
+    let keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
+    let genesis = Certificate::genesis(&mock_committee())
+        .iter()
+        .map(|x| x.digest())
+        .collect::<BTreeSet<_>>();
+    let (mut certificates, next_parents) = make_certificates(3, 5, &genesis, &keys);
+
+    // Make one certificate with round 6 to trigger the commits.
+    let (_, certificate) = mock_certificate(keys[0], 6, next_parents);
+    certificates.push_back(certificate);
+
+    // Spawn the consensus engine and sink the primary channel.
+    let (tx_waiter, rx_waiter) = channel(1);
+    let (tx_primary, mut rx_primary) = channel(1);
+    let (tx_output, mut rx_output) = channel(1);
+    Consensus::spawn(
+        mock_committee(),
+        /* gc_depth */ 50,
+        rx_waiter,
+        tx_primary,
+        tx_output,
+    );
+    tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
+
+    // Feed all certificates to the consensus. Only the last certificate should trigger
+    // commits, so the task should not block.
+    while let Some(certificate) = certificates.pop_front() {
+        tx_waiter.send(certificate).await.unwrap();
+    }
+
+    // Ensure the first 4 ordered certificates are from round 3 (they are the parents of the committed
+    // leader 4); then the leader's certificate should be committed.
+    for _ in 1..=4 {
+        let certificate = rx_output.recv().await.unwrap();
+        assert_eq!(certificate.round(), 3);
+    }
+    let certificate = rx_output.recv().await.unwrap();
+    assert_eq!(certificate.round(), 4);
 }
 
 // Run for 8 dag rounds with one dead node node (that is not a leader). We should commit the leaders of
@@ -219,13 +264,13 @@ async fn not_enough_support() {
 
     parents = next_parents.clone();
 
-    // Rounds 4, 5, and 6: Fully connected graph.
+    // Rounds 4 and 5: Fully connected graph.
     let nodes: Vec<_> = keys.iter().cloned().take(3).collect();
-    let (out, parents) = make_certificates(4, 6, &parents, &nodes);
+    let (out, parents) = make_certificates(4, 5, &parents, &nodes);
     certificates.extend(out);
 
-    // Round 7: Send a single certificate to trigger the commits.
-    let (_, certificate) = mock_certificate(keys[0], 7, parents);
+    // Round 6: Send a single certificate to trigger the commits.
+    let (_, certificate) = mock_certificate(keys[0], 6, parents);
     certificates.push_back(certificate);
 
     // Spawn the consensus engine and sink the primary channel.
@@ -283,12 +328,12 @@ async fn missing_leader() {
     let (out, parents) = make_certificates(1, 2, &genesis, &nodes);
     certificates.extend(out);
 
-    // Add back the leader for rounds 3, 4, 5 and 6.
-    let (out, parents) = make_certificates(3, 6, &parents, &keys);
+    // Add back the leader for rounds 3, 4, and 5.
+    let (out, parents) = make_certificates(3, 5, &parents, &keys);
     certificates.extend(out);
 
-    // Add a certificate of round 7 to commit the leader of round 4.
-    let (_, certificate) = mock_certificate(keys[0], 7, parents.clone());
+    // Add a certificate of round 6 to commit the leader of round 4.
+    let (_, certificate) = mock_certificate(keys[0], 6, parents.clone());
     certificates.push_back(certificate);
 
     // Spawn the consensus engine and sink the primary channel.
