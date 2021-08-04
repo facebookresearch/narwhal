@@ -1,3 +1,4 @@
+use crate::committer::Committer;
 use crate::config::{Committee, Parameters};
 use crate::core::Core;
 use crate::error::ConsensusError;
@@ -9,17 +10,16 @@ use crate::proposer::Proposer;
 use crate::synchronizer::Synchronizer;
 use async_trait::async_trait;
 use bytes::Bytes;
+use config::{Committee as MempoolCommittee, Parameters as MempoolParameters};
 use crypto::{Digest, PublicKey, SignatureService};
 use futures::SinkExt as _;
 use log::info;
 use network::{MessageHandler, Receiver as NetworkReceiver, Writer};
+use primary::Certificate;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use primary::Certificate;
-use config::{Parameters as MempoolParameters, Committee as MempoolCommittee};
-use crate::committer::Committer;
 
 #[cfg(test)]
 #[path = "tests/consensus_tests.rs"]
@@ -87,7 +87,11 @@ impl Consensus {
         let leader_elector = LeaderElector::new(committee.clone());
 
         // Make the mempool driver.
-        let mempool_driver = MempoolDriver::new(mempool_committee, mempool_parameters.gc_depth, tx_mempool);
+        let mempool_driver = MempoolDriver::new(
+            mempool_committee.clone(),
+            mempool_parameters.gc_depth,
+            tx_mempool,
+        );
 
         // Make the synchronizer.
         let synchronizer = Synchronizer::new(
@@ -119,6 +123,7 @@ impl Consensus {
         Committer::spawn(
             store.clone(),
             mempool_parameters.gc_depth,
+            mempool_committee,
             rx_commit,
         );
 

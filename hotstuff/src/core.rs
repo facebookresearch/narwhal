@@ -12,9 +12,9 @@ use async_recursion::async_recursion;
 use bytes::Bytes;
 use crypto::Hash as _;
 use crypto::{PublicKey, SignatureService};
-use primary::Certificate;
 use log::{debug, error, info, warn};
 use network::SimpleSender;
+use primary::Certificate;
 use std::cmp::max;
 use std::collections::VecDeque;
 use store::Store;
@@ -61,7 +61,7 @@ impl Core {
         rx_loopback: Receiver<Block>,
         tx_proposer: Sender<ProposerMessage>,
         tx_commit: Sender<Certificate>,
-        tx_output: Sender<Block>
+        tx_output: Sender<Block>,
     ) {
         tokio::spawn(async move {
             Self {
@@ -158,7 +158,10 @@ impl Core {
                 warn!("Failed to send block through the output channel: {}", e);
             }
             for certificate in &block.payload {
-                self.tx_commit.send(certificate.clone()).await.expect("Failed to send payload");
+                self.tx_commit
+                    .send(certificate.clone())
+                    .await
+                    .expect("Failed to send payload");
             }
 
             // Cleanup the mempool.
@@ -381,7 +384,7 @@ impl Core {
         }
 
         // Check that the payload certificates are valid.
-        self.mempool_driver.verify(&block.payload).await?;
+        self.mempool_driver.verify(&block).await?;
 
         // All check pass, we can process this block.
         self.process_block(block).await

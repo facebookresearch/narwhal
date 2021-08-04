@@ -1,6 +1,7 @@
 #[macro_use]
 mod error;
 mod aggregator;
+mod committer;
 mod config;
 mod consensus;
 mod core;
@@ -11,7 +12,6 @@ mod messages;
 mod proposer;
 mod synchronizer;
 mod timer;
-mod committer;
 
 #[cfg(test)]
 #[path = "tests/common.rs"]

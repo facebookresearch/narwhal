@@ -1,8 +1,8 @@
 use crate::consensus::Round;
 use crypto::{CryptoError, Digest, PublicKey};
+use primary::DagError;
 use store::StoreError;
 use thiserror::Error;
-use primary::DagError;
 
 #[macro_export]
 macro_rules! bail {
@@ -68,5 +68,5 @@ pub enum ConsensusError {
     TooOld(Digest, Round),
 
     #[error(transparent)]
-    DagError(#[from] DagError)
+    DagError(#[from] DagError),
 }
