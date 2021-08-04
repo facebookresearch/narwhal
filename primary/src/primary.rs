@@ -68,7 +68,9 @@ impl Primary {
     ) {
         let (tx_others_digests, rx_others_digests) = channel(CHANNEL_CAPACITY);
         let (tx_our_digests, rx_our_digests) = channel(CHANNEL_CAPACITY);
+
         let (tx_parents, rx_parents) = channel(CHANNEL_CAPACITY);
+
         let (tx_headers, rx_headers) = channel(CHANNEL_CAPACITY);
         let (tx_sync_headers, rx_sync_headers) = channel(CHANNEL_CAPACITY);
         let (tx_sync_certificates, rx_sync_certificates) = channel(CHANNEL_CAPACITY);
@@ -188,7 +190,7 @@ impl Primary {
         // digests from our workers and it back to the `Core`.
         Proposer::spawn(
             name,
-            &committee,
+            committee.clone(),
             signature_service,
             parameters.header_size,
             parameters.max_header_delay,

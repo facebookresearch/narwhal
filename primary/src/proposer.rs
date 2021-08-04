@@ -7,6 +7,7 @@ use crypto::{Digest, PublicKey, SignatureService};
 use log::debug;
 #[cfg(feature = "benchmark")]
 use log::info;
+use std::convert::TryFrom;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
@@ -26,7 +27,7 @@ pub struct Proposer {
     max_header_delay: u64,
 
     /// Receives the parents to include in the next header (along with their round number).
-    rx_core: Receiver<(Vec<Digest>, Round)>,
+    rx_core: Receiver<(Vec<Certificate>, Round)>,
     /// Receives the batches' digests from our workers.
     rx_workers: Receiver<(Digest, WorkerId)>,
     /// Sends newly created headers to the `Core`.
@@ -35,28 +36,30 @@ pub struct Proposer {
     /// The current round of the dag.
     round: Round,
     /// Holds the certificates' ids waiting to be included in the next header.
-    last_parents: Vec<Digest>,
+    last_parents: Vec<Certificate>,
     /// Holds the batches' digests waiting to be included in the next header.
     digests: Vec<(Digest, WorkerId)>,
     /// Keeps track of the size (in bytes) of batches' digests that we received so far.
     payload_size: usize,
+    // Data used for calculating who the leader is
+    committee: Committee,
 }
 
 impl Proposer {
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         name: PublicKey,
-        committee: &Committee,
+        committee: Committee,
         signature_service: SignatureService,
         header_size: usize,
         max_header_delay: u64,
-        rx_core: Receiver<(Vec<Digest>, Round)>,
+        rx_core: Receiver<(Vec<Certificate>, Round)>,
         rx_workers: Receiver<(Digest, WorkerId)>,
         tx_core: Sender<Header>,
     ) {
-        let genesis = Certificate::genesis(committee)
+        let genesis = Certificate::genesis(&committee)
             .iter()
-            .map(|x| x.digest())
+            .map(|x| x.clone())
             .collect();
 
         tokio::spawn(async move {
@@ -72,6 +75,7 @@ impl Proposer {
                 last_parents: genesis,
                 digests: Vec::with_capacity(2 * header_size),
                 payload_size: 0,
+                committee: committee.clone(),
             }
             .run()
             .await;
@@ -84,7 +88,7 @@ impl Proposer {
             self.name,
             self.round,
             self.digests.drain(..).collect(),
-            self.last_parents.drain(..).collect(),
+            self.last_parents.drain(..).map(|x| x.digest()).collect(),
             &mut self.signature_service,
         )
         .await;
@@ -103,6 +107,21 @@ impl Proposer {
             .expect("Failed to send header");
     }
 
+    /// Returns the public key originated by the leader of the
+    /// specified round (if any).
+    fn leader<'a>(&self, round: Round) -> PublicKey {
+        #[cfg(test)]
+        let coin = round;
+        #[cfg(not(test))]
+        let coin = round;
+
+        // Elect the leader.
+        let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+        keys.sort();
+        let leader = keys[coin as usize % self.committee.size()];
+        leader
+    }
+
     // Main loop listening to incoming messages.
     pub async fn run(&mut self) {
         debug!("Dag starting at round {}", self.round);
@@ -117,11 +136,10 @@ impl Proposer {
             // inter-header delay has passed.
             // 2. We have a quorum of certificates from the previous round and one includes the leader block.
             let enough_parents = !self.last_parents.is_empty();
-            //let enough_digests = self.payload_size >= self.header_size;
+            let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
 
-            // For simplicity just always wait the timeout in order to guarantee the leader block will be included after GST (delta)
-            if enough_parents && timer_expired {
+            if (timer_expired || enough_digests) && enough_parents {
                 // Make a new header.
                 self.make_header().await;
                 self.payload_size = 0;
@@ -135,6 +153,29 @@ impl Proposer {
                 Some((parents, round)) = self.rx_core.recv() => {
                     if round < self.round {
                         continue;
+                    }
+
+                    let leader = self.leader(round);
+                    // For each parent we check if there is a vote for the leader
+                    let leader_votes = self.last_parents
+                                            .clone()
+                                            .into_iter()
+                                            .map(|x| x.votes).filter(|x| x.into_iter().filter(|(pk, _)| pk.eq(&leader)).count() > 0);
+
+                    // The condition for advancing an odd round is at least one parent has a vote for the leader
+                    if self.round % 2 == 1 && enough_parents {
+                        // If there are 0 leader votes then don't advance the round
+                        if leader_votes.clone().count() == 0 {
+                            continue;
+                        }
+                    }
+
+                    // The condition for advancing an even round are 2f+1 votes to the steady state leader
+                    if self.round % 2 == 0 && enough_parents {
+                        // If less than 2f+1 votes then don't advance the round
+                        if leader_votes.clone().count() < usize::try_from(self.committee.clone().quorum_threshold()).unwrap() {
+                            continue;
+                        }
                     }
 
                     // Advance to the next round.

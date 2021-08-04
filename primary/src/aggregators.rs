@@ -2,8 +2,7 @@
 use crate::error::{DagError, DagResult};
 use crate::messages::{Certificate, Header, Vote};
 use config::{Committee, Stake};
-use crypto::Hash as _;
-use crypto::{Digest, PublicKey, Signature};
+use crypto::{PublicKey, Signature};
 use std::collections::HashSet;
 
 /// Aggregates votes for a particular header into a certificate.
@@ -49,7 +48,7 @@ impl VotesAggregator {
 /// Aggregate certificates and check if we reach a quorum.
 pub struct CertificatesAggregator {
     weight: Stake,
-    certificates: Vec<Digest>,
+    certificates: Vec<Certificate>,
     used: HashSet<PublicKey>,
 }
 
@@ -66,7 +65,7 @@ impl CertificatesAggregator {
         &mut self,
         certificate: Certificate,
         committee: &Committee,
-    ) -> DagResult<Option<Vec<Digest>>> {
+    ) -> DagResult<Option<Vec<Certificate>>> {
         let origin = certificate.origin();
 
         // Ensure it is the first time this authority votes.
@@ -74,7 +73,7 @@ impl CertificatesAggregator {
             return Ok(None);
         }
 
-        self.certificates.push(certificate.digest());
+        self.certificates.push(certificate);
         self.weight += committee.stake(&origin);
         if self.weight >= committee.quorum_threshold() {
             self.weight = 0; // Ensures quorum is only reached once.
