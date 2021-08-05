@@ -1,6 +1,6 @@
-use crate::config::Committee;
 use crate::consensus::Round;
 use crate::error::{ConsensusError, ConsensusResult};
+use config::Committee;
 use crypto::{Digest, Hash, PublicKey, Signature, SignatureService};
 use ed25519_dalek::Digest as _;
 use ed25519_dalek::Sha512;
@@ -94,7 +94,7 @@ impl fmt::Debug for Block {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{}: B({}, {}, {:?}, {})",
+            "{}: HSB({}, {}, {:?}, {})",
             self.digest(),
             self.author,
             self.round,
@@ -106,7 +106,7 @@ impl fmt::Debug for Block {
 
 impl fmt::Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "B{}", self.round)
+        write!(f, "HSB{}", self.round)
     }
 }
 

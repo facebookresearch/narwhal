@@ -1,6 +1,6 @@
 use crate::consensus::{Round, CHANNEL_CAPACITY};
 use crate::error::{ConsensusError, ConsensusResult};
-use config::Committee as MempoolCommittee;
+use config::Committee;
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
 use futures::future::try_join_all;
@@ -69,9 +69,9 @@ pub struct Committer {
 
 impl Committer {
     pub fn spawn(
+        committee: Committee,
         store: Store,
         gc_depth: Round,
-        mempool_committee: MempoolCommittee,
         rx_commit: Receiver<Certificate>,
     ) {
         let (tx_deliver, rx_deliver) = channel(CHANNEL_CAPACITY);
@@ -84,7 +84,7 @@ impl Committer {
             Self {
                 gc_depth,
                 rx_deliver,
-                genesis: Certificate::genesis(&mempool_committee),
+                genesis: Certificate::genesis(&committee),
             }
             .run()
             .await;
@@ -144,12 +144,12 @@ impl Committer {
 
     /// Flatten the dag referenced by the input certificate. This is a classic depth-first search (pre-order):
     /// https://en.wikipedia.org/wiki/Tree_traversal#Pre-order
-    fn order_dag(&self, leader: &Certificate, state: &State) -> Vec<Certificate> {
-        debug!("Processing sub-dag of {:?}", leader);
+    fn order_dag(&self, tip: &Certificate, state: &State) -> Vec<Certificate> {
+        debug!("Processing sub-dag of {:?}", tip);
         let mut ordered = Vec::new();
         let mut already_ordered = HashSet::new();
 
-        let mut buffer = vec![leader];
+        let mut buffer = vec![tip];
         while let Some(x) = buffer.pop() {
             debug!("Sequencing {:?}", x);
             ordered.push(x.clone());
@@ -233,6 +233,14 @@ impl CertificateWaiter {
         loop {
             tokio::select! {
                 Some(certificate) = self.rx_input.recv() => {
+                    // Skip genesis' children.
+                    if certificate.round() == 1 {
+                        self.tx_output.send(certificate).await.expect("Failed to send certificate");
+                        continue;
+                    }
+
+                    debug!("Waiting for history of {:?}", certificate);
+
                     // Add the certificate to the waiter pool. The waiter will return it to us
                     // when all its parents are in the store.
                     let wait_for = certificate
@@ -247,6 +255,7 @@ impl CertificateWaiter {
                 }
                 Some(result) = waiting.next() => match result {
                     Ok(certificate) => {
+                        debug!("Got all the history of {:?}", certificate);
                         self.tx_output.send(certificate).await.expect("Failed to send certificate");
                     },
                     Err(e) => {

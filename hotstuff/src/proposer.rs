@@ -1,14 +1,17 @@
-use crate::config::{Committee, Stake};
 use crate::consensus::{ConsensusMessage, Round};
 use crate::messages::{Block, QC, TC};
 use bytes::Bytes;
+use config::{Committee, Stake};
 use crypto::{PublicKey, SignatureService};
 use futures::stream::futures_unordered::FuturesUnordered;
 use futures::stream::StreamExt as _;
-use log::{debug, info};
+use log::debug;
+#[cfg(feature = "benchmark")]
+use log::info;
 use network::{CancelHandler, ReliableSender};
 use primary::Certificate;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::time::{sleep, Duration};
 
 #[derive(Debug)]
 pub struct ProposerMessage(pub Round, pub QC, pub Option<TC>);
@@ -68,12 +71,12 @@ impl Proposer {
         .await;
 
         if !block.payload.is_empty() {
-            info!("Created {}", block);
-
             #[cfg(feature = "benchmark")]
-            for x in &block.payload {
-                // NOTE: This log entry is used to compute performance.
-                info!("Created {} -> {:?}", block, x);
+            for certificate in &block.payload {
+                for x in certificate.header.payload.keys() {
+                    // NOTE: This log entry is used to compute performance.
+                    info!("Created {} -> {:?}", certificate.header, x);
+                }
             }
         }
         debug!("Created {:?}", block);
@@ -82,9 +85,9 @@ impl Proposer {
         debug!("Broadcasting {:?}", block);
         let (names, addresses): (Vec<_>, _) = self
             .committee
-            .broadcast_addresses(&self.name)
-            .iter()
-            .cloned()
+            .others_consensus(&self.name)
+            .into_iter()
+            .map(|(name, x)| (name, x.consensus_to_consensus))
             .unzip();
         let message = bincode::serialize(&ConsensusMessage::Propose(block.clone()))
             .expect("Failed to serialize block");
@@ -128,6 +131,9 @@ impl Proposer {
                 },
                 Some(ProposerMessage(round, qc, tc)) = self.rx_message.recv() =>  {
                     self.make_block(round, qc, tc).await;
+
+                    // TODO: Ugly control system.
+                    sleep(Duration::from_millis(100)).await;
                 }
             }
         }

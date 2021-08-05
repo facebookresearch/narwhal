@@ -1,5 +1,4 @@
 use crate::aggregator::Aggregator;
-use crate::config::Committee;
 use crate::consensus::{ConsensusMessage, Round};
 use crate::error::{ConsensusError, ConsensusResult};
 use crate::leader::LeaderElector;
@@ -10,9 +9,10 @@ use crate::synchronizer::Synchronizer;
 use crate::timer::Timer;
 use async_recursion::async_recursion;
 use bytes::Bytes;
+use config::Committee;
 use crypto::Hash as _;
 use crypto::{PublicKey, SignatureService};
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use network::SimpleSender;
 use primary::Certificate;
 use std::cmp::max;
@@ -125,7 +125,7 @@ impl Core {
         }
 
         let mut to_commit = VecDeque::new();
-        to_commit.push_back(block.clone());
+        to_commit.push_front(block.clone());
 
         // Ensure we commit the entire chain. This is needed after view-change.
         let mut parent = block.clone();
@@ -144,15 +144,6 @@ impl Core {
 
         // Send all the newly committed blocks to the node's application layer.
         while let Some(block) = to_commit.pop_back() {
-            if !block.payload.is_empty() {
-                info!("Committed {}", block);
-
-                #[cfg(feature = "benchmark")]
-                for x in &block.payload {
-                    // NOTE: This log entry is used to compute performance.
-                    info!("Committed {} -> {:?}", block, x);
-                }
-            }
             debug!("Committed {:?}", block);
             if let Err(e) = self.tx_output.send(block.clone()).await {
                 warn!("Failed to send block through the output channel: {}", e);
@@ -199,9 +190,9 @@ impl Core {
         debug!("Broadcasting {:?}", timeout);
         let addresses = self
             .committee
-            .broadcast_addresses(&self.name)
+            .others_consensus(&self.name)
             .into_iter()
-            .map(|(_, x)| x)
+            .map(|(_, x)| x.consensus_to_consensus)
             .collect();
         let message = bincode::serialize(&ConsensusMessage::Timeout(timeout.clone()))
             .expect("Failed to serialize timeout message");
@@ -261,9 +252,9 @@ impl Core {
             debug!("Broadcasting {:?}", tc);
             let addresses = self
                 .committee
-                .broadcast_addresses(&self.name)
+                .others_consensus(&self.name)
                 .into_iter()
-                .map(|(_, x)| x)
+                .map(|(_, x)| x.consensus_to_consensus)
                 .collect();
             let message = bincode::serialize(&ConsensusMessage::TC(tc.clone()))
                 .expect("Failed to serialize timeout certificate");
@@ -349,8 +340,9 @@ impl Core {
                 debug!("Sending {:?} to {}", vote, next_leader);
                 let address = self
                     .committee
-                    .address(&next_leader)
-                    .expect("The next leader is not in the committee");
+                    .consensus(&next_leader)
+                    .expect("The next leader is not in the committee")
+                    .consensus_to_consensus;
                 let message = bincode::serialize(&ConsensusMessage::Vote(vote))
                     .expect("Failed to serialize vote");
                 self.network.send(address, Bytes::from(message)).await;

@@ -1,5 +1,4 @@
 use crate::committer::Committer;
-use crate::config::{Committee, Parameters};
 use crate::core::Core;
 use crate::error::ConsensusError;
 use crate::helper::Helper;
@@ -10,7 +9,7 @@ use crate::proposer::Proposer;
 use crate::synchronizer::Synchronizer;
 use async_trait::async_trait;
 use bytes::Bytes;
-use config::{Committee as MempoolCommittee, Parameters as MempoolParameters};
+use config::{Committee, Parameters};
 use crypto::{Digest, PublicKey, SignatureService};
 use futures::SinkExt as _;
 use log::info;
@@ -47,9 +46,7 @@ impl Consensus {
     pub fn spawn(
         name: PublicKey,
         committee: Committee,
-        mempool_committee: MempoolCommittee,
         parameters: Parameters,
-        mempool_parameters: MempoolParameters,
         signature_service: SignatureService,
         store: Store,
         rx_mempool: Receiver<Certificate>,
@@ -67,8 +64,9 @@ impl Consensus {
 
         // Spawn the network receiver.
         let mut address = committee
-            .address(&name)
-            .expect("Our public key is not in the committee");
+            .consensus(&name)
+            .expect("Our public key is not in the committee")
+            .consensus_to_consensus;
         address.set_ip("0.0.0.0".parse().unwrap());
         NetworkReceiver::spawn(
             address,
@@ -87,11 +85,7 @@ impl Consensus {
         let leader_elector = LeaderElector::new(committee.clone());
 
         // Make the mempool driver.
-        let mempool_driver = MempoolDriver::new(
-            mempool_committee.clone(),
-            mempool_parameters.gc_depth,
-            tx_mempool,
-        );
+        let mempool_driver = MempoolDriver::new(committee.clone(), tx_mempool);
 
         // Make the synchronizer.
         let synchronizer = Synchronizer::new(
@@ -121,9 +115,9 @@ impl Consensus {
 
         // Commits the mempool certificates and their sub-dag.
         Committer::spawn(
+            committee.clone(),
             store.clone(),
-            mempool_parameters.gc_depth,
-            mempool_committee,
+            parameters.gc_depth,
             rx_commit,
         );
 

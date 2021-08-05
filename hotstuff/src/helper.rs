@@ -1,6 +1,6 @@
-use crate::config::Committee;
 use crate::consensus::ConsensusMessage;
 use bytes::Bytes;
+use config::Committee;
 use crypto::{Digest, PublicKey};
 use log::warn;
 use network::SimpleSender;
@@ -42,10 +42,10 @@ impl Helper {
             // TODO [issue #58]: Do some accounting to prevent bad nodes from monopolizing our resources.
 
             // get the requestors address.
-            let address = match self.committee.address(&origin) {
-                Some(x) => x,
-                None => {
-                    warn!("Received sync request from unknown authority: {}", origin);
+            let address = match self.committee.consensus(&origin) {
+                Ok(x) => x.consensus_to_consensus,
+                Err(e) => {
+                    warn!("Received unexpected sync request: {}", e);
                     continue;
                 }
             };

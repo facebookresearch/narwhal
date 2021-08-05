@@ -1,43 +1,26 @@
-use crate::consensus::Round;
-use crate::error::{ConsensusError, ConsensusResult};
+use crate::error::ConsensusResult;
 use crate::messages::Block;
-use config::Committee as MempoolCommittee;
-use crypto::Hash as _;
+use config::Committee;
 use primary::Certificate;
 use tokio::sync::mpsc::Sender;
 
 pub struct MempoolDriver {
-    mempool_committee: MempoolCommittee,
-    gc_depth: Round,
+    committee: Committee,
     tx_mempool: Sender<Certificate>,
 }
 
 impl MempoolDriver {
-    pub fn new(
-        mempool_committee: MempoolCommittee,
-        gc_depth: Round,
-        tx_mempool: Sender<Certificate>,
-    ) -> Self {
+    pub fn new(committee: Committee, tx_mempool: Sender<Certificate>) -> Self {
         Self {
-            mempool_committee,
-            gc_depth,
+            committee,
             tx_mempool,
         }
     }
 
     /// Verify the payload certificates.
     pub async fn verify(&mut self, block: &Block) -> ConsensusResult<()> {
-        let gc_round = match block.round > self.gc_depth {
-            true => block.round - self.gc_depth,
-            false => 0,
-        };
         for certificate in &block.payload {
-            ensure!(
-                gc_round <= certificate.round(),
-                ConsensusError::TooOld(certificate.digest(), certificate.round())
-            );
-
-            certificate.verify(&self.mempool_committee)?;
+            certificate.verify(&self.committee)?;
         }
         Ok(())
     }

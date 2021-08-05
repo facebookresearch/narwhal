@@ -2,7 +2,6 @@
 mod error;
 mod aggregator;
 mod committer;
-mod config;
 mod consensus;
 mod core;
 mod helper;
@@ -17,6 +16,5 @@ mod timer;
 #[path = "tests/common.rs"]
 mod common;
 
-pub use crate::config::{Committee, Parameters};
 pub use crate::consensus::Consensus;
 pub use crate::messages::{Block, QC, TC};

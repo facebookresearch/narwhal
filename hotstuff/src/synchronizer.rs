@@ -1,8 +1,8 @@
-use crate::config::Committee;
 use crate::consensus::{ConsensusMessage, CHANNEL_CAPACITY};
 use crate::error::ConsensusResult;
 use crate::messages::{Block, QC};
 use bytes::Bytes;
+use config::Committee;
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
 use futures::stream::futures_unordered::FuturesUnordered;
@@ -62,8 +62,9 @@ impl Synchronizer {
                                     .as_millis();
                                 requests.insert(parent.clone(), now);
                                 let address = committee
-                                    .address(&author)
-                                    .expect("Author of valid block is not in the committee");
+                                    .consensus(&author)
+                                    .expect("Author of valid block is not in the committee")
+                                    .consensus_to_consensus;
                                 let message = ConsensusMessage::SyncRequest(parent, name);
                                 let message = bincode::serialize(&message)
                                     .expect("Failed to serialize sync request");
@@ -91,9 +92,9 @@ impl Synchronizer {
                             if timestamp + (sync_retry_delay as u128) < now {
                                 debug!("Requesting sync for block {} (retry)", digest);
                                 let addresses = committee
-                                    .broadcast_addresses(&name)
+                                    .others_consensus(&name)
                                     .into_iter()
-                                    .map(|(_, x)| x)
+                                    .map(|(_, x)| x.consensus_to_consensus)
                                     .collect();
                                 let message = ConsensusMessage::SyncRequest(digest.clone(), name);
                                 let message = bincode::serialize(&message)

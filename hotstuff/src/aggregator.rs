@@ -1,7 +1,7 @@
-use crate::config::{Committee, Stake};
 use crate::consensus::Round;
 use crate::error::{ConsensusError, ConsensusResult};
 use crate::messages::{Timeout, Vote, QC, TC};
+use config::{Committee, Stake};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, Signature};
 use std::collections::{HashMap, HashSet};
