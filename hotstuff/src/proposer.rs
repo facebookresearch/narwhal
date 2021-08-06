@@ -126,10 +126,10 @@ impl Proposer {
             tokio::select! {
                 Some(certificate) = self.rx_mempool.recv() => {
                     let mut update = certificate.origin() == self.name;
-                    update &= self.next_payload
-                        .as_ref()
-                        .filter(|x| x.round() >= certificate.round())
-                        .is_none();
+                    //update &= self.next_payload
+                    //    .as_ref()
+                    //    .filter(|x| x.round() >= certificate.round())
+                    //    .is_none();
                     if update {
                         self.next_payload.replace(certificate);
                     }
