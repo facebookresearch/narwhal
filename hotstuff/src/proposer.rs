@@ -21,7 +21,7 @@ pub struct Proposer {
     rx_mempool: Receiver<Certificate>,
     rx_message: Receiver<ProposerMessage>,
     tx_loopback: Sender<Block>,
-    next_payload: Option<Certificate>,
+    buffer: Vec<Certificate>,
     network: ReliableSender,
 }
 
@@ -42,7 +42,7 @@ impl Proposer {
                 rx_mempool,
                 rx_message,
                 tx_loopback,
-                next_payload: None,
+                buffer: Vec::new(),
                 network: ReliableSender::new(),
             }
             .run()
@@ -63,9 +63,7 @@ impl Proposer {
             tc,
             self.name,
             round,
-            self.next_payload
-                .take()
-                .map_or_else(Vec::default, |x| vec![x]),
+            /* payload */ self.buffer.drain(..).collect(),
             self.signature_service.clone(),
         )
         .await;
@@ -125,13 +123,8 @@ impl Proposer {
         loop {
             tokio::select! {
                 Some(certificate) = self.rx_mempool.recv() => {
-                    let mut update = certificate.origin() == self.name;
-                    //update &= self.next_payload
-                    //    .as_ref()
-                    //    .filter(|x| x.round() >= certificate.round())
-                    //    .is_none();
-                    if update {
-                        self.next_payload.replace(certificate);
+                    if certificate.origin() == self.name {
+                        self.buffer.push(certificate)
                     }
                 },
                 Some(ProposerMessage(round, qc, tc)) = self.rx_message.recv() =>  {
