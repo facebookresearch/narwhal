@@ -21,8 +21,6 @@ pub struct Proposer {
     rx_message: Receiver<ProposerMessage>,
     tx_loopback: Sender<Block>,
     buffer: Vec<Certificate>,
-    buffer_size: usize,
-    max_payload_size: usize,
     network: ReliableSender,
 }
 
@@ -44,8 +42,6 @@ impl Proposer {
                 rx_message,
                 tx_loopback,
                 buffer: Vec::new(),
-                buffer_size: 0,
-                max_payload_size: 1_000,
                 network: ReliableSender::new(),
             }
             .run()
@@ -70,8 +66,6 @@ impl Proposer {
             self.signature_service.clone(),
         )
         .await;
-
-        self.buffer_size = 0;
 
         if !block.payload.is_empty() {
             #[cfg(feature = "benchmark")]
@@ -128,12 +122,7 @@ impl Proposer {
         loop {
             tokio::select! {
                 Some(certificate) = self.rx_mempool.recv() => {
-                    if certificate.origin() == self.name && self.buffer_size < self.max_payload_size {
-                        self.buffer_size += certificate
-                            .header.payload
-                            .keys()
-                            .map(|x| x.size())
-                            .sum::<usize>();
+                    if certificate.origin() == self.name {
                         self.buffer.push(certificate);
                     }
                 },
