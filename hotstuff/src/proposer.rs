@@ -5,13 +5,11 @@ use config::{Committee, Stake};
 use crypto::{PublicKey, SignatureService};
 use futures::stream::futures_unordered::FuturesUnordered;
 use futures::stream::StreamExt as _;
-use log::debug;
-#[cfg(feature = "benchmark")]
-use log::info;
+use log::{debug, info};
 use network::{CancelHandler, ReliableSender};
 use primary::Certificate;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::{sleep, Duration};
+//use tokio::time::{sleep, Duration};
 
 #[derive(Debug)]
 pub struct ProposerMessage(pub Round, pub QC, pub Option<TC>);
@@ -24,6 +22,8 @@ pub struct Proposer {
     rx_message: Receiver<ProposerMessage>,
     tx_loopback: Sender<Block>,
     buffer: Vec<Certificate>,
+    buffer_size: usize,
+    max_payload_size: usize,
     network: ReliableSender,
 }
 
@@ -45,6 +45,8 @@ impl Proposer {
                 rx_message,
                 tx_loopback,
                 buffer: Vec::new(),
+                buffer_size: 0,
+                max_payload_size: 5_000,
                 network: ReliableSender::new(),
             }
             .run()
@@ -70,6 +72,8 @@ impl Proposer {
         )
         .await;
 
+        self.buffer_size = 0;
+
         if !block.payload.is_empty() {
             #[cfg(feature = "benchmark")]
             for certificate in &block.payload {
@@ -79,7 +83,7 @@ impl Proposer {
                 }
             }
         }
-        debug!("Created {:?}", block);
+        info!("Created {:?}", block);
 
         // Broadcast our new block.
         debug!("Broadcasting {:?}", block);
@@ -125,7 +129,12 @@ impl Proposer {
         loop {
             tokio::select! {
                 Some(certificate) = self.rx_mempool.recv() => {
-                    if certificate.origin() == self.name {
+                    if certificate.origin() == self.name && self.buffer_size < self.max_payload_size {
+                        self.buffer_size += certificate
+                            .header.payload
+                            .keys()
+                            .map(|x| x.size())
+                            .sum::<usize>();
                         self.buffer.push(certificate);
                     }
                 },
@@ -133,7 +142,7 @@ impl Proposer {
                     self.make_block(round, qc, tc).await;
 
                     // TODO: Ugly control system.
-                    sleep(Duration::from_millis(100)).await;
+                    //sleep(Duration::from_millis(100)).await;
                 }
             }
         }
