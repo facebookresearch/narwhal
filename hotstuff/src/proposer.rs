@@ -125,11 +125,13 @@ impl Proposer {
         loop {
             tokio::select! {
                 Some(certificate) = self.rx_mempool.recv() => {
-                    if certificate.origin() == self.name {
-                        self.next_payload
-                            .as_ref()
-                            .filter(|x| certificate.round() > x.round())
-                            .replace(&certificate);
+                    let mut update = certificate.origin() == self.name;
+                    update &= self.next_payload
+                        .as_ref()
+                        .filter(|x| x.round() >= certificate.round())
+                        .is_none();
+                    if update {
+                        self.next_payload.replace(certificate);
                     }
                 },
                 Some(ProposerMessage(round, qc, tc)) = self.rx_message.recv() =>  {
