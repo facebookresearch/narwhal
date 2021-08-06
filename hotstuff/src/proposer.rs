@@ -9,7 +9,7 @@ use log::{debug, info};
 use network::{CancelHandler, ReliableSender};
 use primary::Certificate;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::{sleep, Duration};
+//use tokio::time::{sleep, Duration};
 
 #[derive(Debug)]
 pub struct ProposerMessage(pub Round, pub QC, pub Option<TC>);
@@ -21,7 +21,7 @@ pub struct Proposer {
     rx_mempool: Receiver<Certificate>,
     rx_message: Receiver<ProposerMessage>,
     tx_loopback: Sender<Block>,
-    buffer: Vec<Certificate>,
+    next_payload: Option<Certificate>,
     network: ReliableSender,
 }
 
@@ -42,7 +42,7 @@ impl Proposer {
                 rx_mempool,
                 rx_message,
                 tx_loopback,
-                buffer: Vec::new(),
+                next_payload: None,
                 network: ReliableSender::new(),
             }
             .run()
@@ -63,7 +63,9 @@ impl Proposer {
             tc,
             self.name,
             round,
-            /* payload */ self.buffer.drain(..).collect(),
+            self.next_payload
+                .take()
+                .map_or_else(Vec::default, |x| vec![x]),
             self.signature_service.clone(),
         )
         .await;
@@ -124,14 +126,17 @@ impl Proposer {
             tokio::select! {
                 Some(certificate) = self.rx_mempool.recv() => {
                     if certificate.origin() == self.name {
-                        self.buffer.push(certificate);
+                        self.next_payload
+                            .as_ref()
+                            .filter(|x| certificate.round() > x.round())
+                            .replace(&certificate);
                     }
                 },
                 Some(ProposerMessage(round, qc, tc)) = self.rx_message.recv() =>  {
                     self.make_block(round, qc, tc).await;
 
                     // TODO: Ugly control system.
-                    sleep(Duration::from_millis(100)).await;
+                    //sleep(Duration::from_millis(100)).await;
                 }
             }
         }
