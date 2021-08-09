@@ -123,19 +123,9 @@ impl Proposer {
         loop {
             tokio::select! {
                 Some(certificate) = self.rx_mempool.recv() => {
-                    if self.buffer.is_empty() {
-                        self.buffer.push(certificate);
-                    } else {
-                        if self.buffer[0].round() < certificate.round() {
-                            self.buffer.push(certificate);
-                            self.buffer.swap_remove(0);
-                        }
-                    }
-                    /*
                     if certificate.origin() == self.name {
                         self.buffer.push(certificate)
                     }
-                    */
                 },
                 Some(ProposerMessage(round, qc, tc)) = self.rx_message.recv() =>  {
                     self.make_block(round, qc, tc).await;
