@@ -153,6 +153,7 @@ impl Committer {
         while let Some(x) = buffer.pop() {
             debug!("Sequencing {:?}", x);
             ordered.push(x.clone());
+            debug!("Its parents are: {:?}", x.header.parents);
             for parent in &x.header.parents {
                 let (digest, certificate) = match state
                     .dag
