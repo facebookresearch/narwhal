@@ -119,6 +119,7 @@ impl Consensus {
 
             // Try to order the dag to commit. Start from the highest round for which we have at least
             // 2f+1 certificates. This is because we need them to decide whether the commit rule is satisifed.
+            // Remove this line
             let r = round - 1;
 
             // We only elect leaders for even round numbers
@@ -231,7 +232,7 @@ impl Consensus {
             let votes = state
                 .dag
                 .get(&(r + 1))
-                .expect("vertices at round r+1")
+                .expect("No vertices found at round r+1")
                 .values()
                 .filter(|(_, certificate)| certificate.header.id.eq(&leader.header.id))
                 .map(|(_, certificate)| certificate.header.parents.clone())
@@ -256,9 +257,7 @@ impl Consensus {
                 .filter(|(_, certificate)| self.linked(certificate, prev_leader, &state.dag));
 
             let num_paths = steady_state_votes.count();
-            println!("prev leader round {}", state.last_committed_round);
-            println!("number of paths {}", num_paths);
-            // Check whether there are f+1 paths votes between the last two leaders.
+            // Check whether there are f+1 votes between the last two leaders.
             if num_paths >= usize::try_from(self.committee.validity_threshold()).unwrap() {
                 to_commit.push(prev_leader.clone());
                 leader = prev_leader;
@@ -267,7 +266,7 @@ impl Consensus {
         to_commit
     }
 
-    /// Checks if there are f+1 paths between two leaders.
+    /// Checks if there at least 1 path between two leaders.
     fn linked(&self, leader: &Certificate, prev_leader: &Certificate, dag: &Dag) -> bool {
         let mut parents = vec![leader];
         for r in (prev_leader.round()..leader.round()).rev() {
@@ -282,32 +281,6 @@ impl Consensus {
 
         parents.contains(&prev_leader)
     }
-
-    /*fn num_paths(&self, source: &Certificate, dest: &Certificate, path_count: &mut u32, dag: &Dag, visited_links: &mut Vec<Digest>) {
-        let source_digest = source.clone().header.id;
-        visited_links.push(source_digest);
-
-        if source.header.round < dest.header.round {
-            return;
-        } else if source.eq(&dest) {
-            println!("{} Made it to base case", dest.header.round);
-            *path_count += 1;
-        } else {
-            for parent in &source.header.parents {
-                let (digest, certificate) = match dag
-                    .get(&(source.round() - 1))
-                    .map(|x| x.values().find(|(x, _)| x == parent))
-                    .flatten()
-                {
-                    Some(x) => x,
-                    None => continue, // We already ordered or GC up to here.
-                };
-                if !visited_links.contains(digest) {
-                    self.num_paths(certificate, dest, path_count, dag, visited_links)
-                }
-            }
-        }
-    }*/
 
     /// Flatten the dag referenced by the input certificate. This is a classic depth-first search (pre-order):
     /// https://en.wikipedia.org/wiki/Tree_traversal#Pre-order

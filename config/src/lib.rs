@@ -57,6 +57,7 @@ pub trait Export: Serialize {
 
 pub type Stake = u32;
 pub type WorkerId = u32;
+pub type Round = u64;
 
 #[derive(Deserialize, Clone)]
 pub struct Parameters {
@@ -178,6 +179,18 @@ impl Committee {
         // then (N + 2) / 3 = f + 1 + k/3 = f + 1
         let total_votes: Stake = self.authorities.values().map(|x| x.stake).sum();
         (total_votes + 2) / 3
+    }
+
+    /// Returns the public key originated by the leader of the
+    /// specified round (if any).
+    pub fn leader(&self, round: Round) -> PublicKey {
+        let coin = round;
+
+        // Elect the leader.
+        let mut keys: Vec<_> = self.authorities.keys().cloned().collect();
+        keys.sort();
+        let leader = keys[coin as usize % self.size()];
+        leader
     }
 
     /// Returns the primary addresses of the target primary.

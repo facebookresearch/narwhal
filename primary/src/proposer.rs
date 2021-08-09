@@ -107,27 +107,14 @@ impl Proposer {
             .expect("Failed to send header");
     }
 
-    /// Returns the public key originated by the leader of the
-    /// specified round (if any).
-    fn leader<'a>(&self, round: Round) -> PublicKey {
-        #[cfg(test)]
-        let coin = round;
-        #[cfg(not(test))]
-        let coin = round;
-
-        // Elect the leader.
-        let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
-        keys.sort();
-        let leader = keys[coin as usize % self.committee.size()];
-        leader
-    }
-
     // Main loop listening to incoming messages.
     pub async fn run(&mut self) {
         debug!("Dag starting at round {}", self.round);
 
         let timer = sleep(Duration::from_millis(self.max_header_delay));
+        let dag_timer = sleep(Duration::from_millis(self.max_header_delay));
         tokio::pin!(timer);
+        tokio::pin!(dag_timer);
 
         loop {
             // Check if we can propose a new header. We propose a new header when one of the following
@@ -139,6 +126,8 @@ impl Proposer {
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
 
+            // change core to send parents one by one instead of 2f+1 (same logic for advance round condition)
+            // make aggregator on the proposer
             if (timer_expired || enough_digests) && enough_parents {
                 // Make a new header.
                 self.make_header().await;
@@ -150,30 +139,33 @@ impl Proposer {
             }
 
             tokio::select! {
+                // don't need the round
                 Some((parents, round)) = self.rx_core.recv() => {
                     if round < self.round {
                         continue;
                     }
 
-                    let leader = self.leader(round);
+                    let leader = self.committee.leader(round);
                     // For each parent we check if there is a vote for the leader
                     let leader_votes = self.last_parents
                                             .clone()
                                             .into_iter()
                                             .map(|x| x.votes).filter(|x| x.into_iter().filter(|(pk, _)| pk.eq(&leader)).count() > 0);
 
+                    // Check if the timer has expired
+                    let dag_timer_expired = dag_timer.is_elapsed();
                     // The condition for advancing an odd round is at least one parent has a vote for the leader
-                    if self.round % 2 == 1 && enough_parents {
-                        // If there are 0 leader votes then don't advance the round
-                        if leader_votes.clone().count() == 0 {
+                    if self.round % 2 == 1 {
+                        // If there are 0 leader votes then don't advance the round and the timer has not expired
+                        if leader_votes.clone().count() == 0 && !dag_timer_expired {
                             continue;
                         }
                     }
 
                     // The condition for advancing an even round are 2f+1 votes to the steady state leader
-                    if self.round % 2 == 0 && enough_parents {
-                        // If less than 2f+1 votes then don't advance the round
-                        if leader_votes.clone().count() < usize::try_from(self.committee.clone().quorum_threshold()).unwrap() {
+                    if self.round % 2 == 0 {
+                        // If less than 2f+1 votes then don't advance the round and check for additional timeout
+                        if leader_votes.clone().count() < usize::try_from(self.committee.clone().quorum_threshold()).unwrap() && !dag_timer_expired {
                             continue;
                         }
                     }
