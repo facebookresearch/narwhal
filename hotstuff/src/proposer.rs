@@ -130,6 +130,7 @@ impl Proposer {
                     */
                     if self.buffer.is_empty() {
                         self.buffer.push(certificate);
+                        continue;
                     }
                     if self.buffer[0].round() < certificate.round() {
                         self.buffer.push(certificate);
