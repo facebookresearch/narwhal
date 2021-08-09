@@ -130,7 +130,6 @@ impl Committer {
 
             // Print the committed sequence in the right order.
             for certificate in sequence {
-                #[cfg(not(feature = "benchmark"))]
                 info!("Committed {}", certificate.header);
 
                 #[cfg(feature = "benchmark")]
@@ -153,7 +152,6 @@ impl Committer {
         while let Some(x) = buffer.pop() {
             debug!("Sequencing {:?}", x);
             ordered.push(x.clone());
-            debug!("Its parents are: {:?}", x.header.parents);
             for parent in &x.header.parents {
                 let (digest, certificate) = match state
                     .dag
@@ -162,7 +160,10 @@ impl Committer {
                     .flatten()
                 {
                     Some(x) => x,
-                    None => continue, // We already ordered or GC up to here.
+                    None => {
+                        debug!("We already processed and cleaned up {}", parent);
+                        continue; // We already ordered or GC up to here.
+                    }
                 };
 
                 // We skip the certificate if we (1) already processed it or (2) we reached a round that we already
