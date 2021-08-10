@@ -9,7 +9,6 @@ use log::{debug, info};
 use network::{CancelHandler, ReliableSender};
 use primary::Certificate;
 use tokio::sync::mpsc::{Receiver, Sender};
-//use tokio::time::{sleep, Duration};
 
 #[derive(Debug)]
 pub struct ProposerMessage(pub Round, pub QC, pub Option<TC>);
@@ -126,12 +125,6 @@ impl Proposer {
         loop {
             tokio::select! {
                 Some(certificate) = self.rx_mempool.recv() => {
-                    /*
-                    if certificate.origin() == self.name {
-                        self.buffer.push(certificate)
-                    }
-                    */
-
                     self.tx_committer
                         .send(certificate.clone())
                         .await
@@ -148,9 +141,6 @@ impl Proposer {
                 },
                 Some(ProposerMessage(round, qc, tc)) = self.rx_message.recv() =>  {
                     self.make_block(round, qc, tc).await;
-
-                    // TODO: Ugly control system.
-                    //sleep(Duration::from_millis(100)).await;
                 }
             }
         }
