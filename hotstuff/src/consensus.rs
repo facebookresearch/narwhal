@@ -61,6 +61,7 @@ impl Consensus {
         let (tx_proposer, rx_proposer) = channel(CHANNEL_CAPACITY);
         let (tx_helper, rx_helper) = channel(CHANNEL_CAPACITY);
         let (tx_commit, rx_commit) = channel(CHANNEL_CAPACITY);
+        let (tx_mempool_copy, rx_mempool_copy) = channel(CHANNEL_CAPACITY);
 
         // Spawn the network receiver.
         let mut address = committee
@@ -118,6 +119,7 @@ impl Consensus {
             committee.clone(),
             store.clone(),
             parameters.gc_depth,
+            rx_mempool_copy,
             rx_commit,
         );
 
@@ -129,6 +131,7 @@ impl Consensus {
             rx_mempool,
             /* rx_message */ rx_proposer,
             tx_loopback,
+            tx_mempool_copy,
         );
 
         // Spawn the helper module.

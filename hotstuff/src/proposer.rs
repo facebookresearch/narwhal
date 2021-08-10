@@ -21,6 +21,7 @@ pub struct Proposer {
     rx_mempool: Receiver<Certificate>,
     rx_message: Receiver<ProposerMessage>,
     tx_loopback: Sender<Block>,
+    tx_committer: Sender<Certificate>,
     buffer: Vec<Certificate>,
     network: ReliableSender,
 }
@@ -33,6 +34,7 @@ impl Proposer {
         rx_mempool: Receiver<Certificate>,
         rx_message: Receiver<ProposerMessage>,
         tx_loopback: Sender<Block>,
+        tx_committer: Sender<Certificate>,
     ) {
         tokio::spawn(async move {
             Self {
@@ -42,6 +44,7 @@ impl Proposer {
                 rx_mempool,
                 rx_message,
                 tx_loopback,
+                tx_committer,
                 buffer: Vec::new(),
                 network: ReliableSender::new(),
             }
@@ -128,6 +131,12 @@ impl Proposer {
                         self.buffer.push(certificate)
                     }
                     */
+
+                    self.tx_committer
+                        .send(certificate.clone())
+                        .await
+                        .expect("Failed to send certificate to committer");
+
                     if self.buffer.is_empty() {
                         self.buffer.push(certificate);
                         continue;

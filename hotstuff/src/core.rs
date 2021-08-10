@@ -145,9 +145,13 @@ impl Core {
         // Send all the newly committed blocks to the node's application layer.
         while let Some(block) = to_commit.pop_back() {
             debug!("Committed {:?}", block);
+
+            // Output the block to the top-level application.
             if let Err(e) = self.tx_output.send(block.clone()).await {
                 warn!("Failed to send block through the output channel: {}", e);
             }
+
+            // Send the payload to the committer.
             for certificate in &block.payload {
                 self.tx_commit
                     .send(certificate.clone())

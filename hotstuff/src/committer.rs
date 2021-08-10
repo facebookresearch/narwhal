@@ -63,6 +63,7 @@ impl State {
 
 pub struct Committer {
     gc_depth: Round,
+    rx_mempool: Receiver<Certificate>,
     rx_deliver: Receiver<Certificate>,
     genesis: Vec<Certificate>,
 }
@@ -72,6 +73,7 @@ impl Committer {
         committee: Committee,
         store: Store,
         gc_depth: Round,
+        rx_mempool: Receiver<Certificate>,
         rx_commit: Receiver<Certificate>,
     ) {
         let (tx_deliver, rx_deliver) = channel(CHANNEL_CAPACITY);
@@ -83,6 +85,7 @@ impl Committer {
         tokio::spawn(async move {
             Self {
                 gc_depth,
+                rx_mempool,
                 rx_deliver,
                 genesis: Certificate::genesis(&committee),
             }
@@ -94,48 +97,53 @@ impl Committer {
     async fn run(&mut self) {
         // The consensus state (everything else is immutable).
         let mut state = State::new(self.genesis.clone());
-        while let Some(certificate) = self.rx_deliver.recv().await {
-            debug!("Processing {:?}", certificate);
-            let round = certificate.round();
 
-            // Ensure we didn't already order this certificate.
-            if let Some(r) = state.last_committed.get(&certificate.origin()) {
-                if r >= &round {
-                    continue;
-                }
-            }
+        loop {
+            tokio::select! {
+                Some(certificate) = self.rx_mempool.recv() => {
+                    // Add the new certificate to the local storage.
+                    state.dag.entry(certificate.round()).or_insert_with(HashMap::new).insert(
+                        certificate.origin(),
+                        (certificate.digest(), certificate.clone()),
+                    );
+                },
+                Some(certificate) = self.rx_deliver.recv() => {
+                    debug!("Processing {:?}", certificate);
 
-            // Add the new certificate to the local storage.
-            state.dag.entry(round).or_insert_with(HashMap::new).insert(
-                certificate.origin(),
-                (certificate.digest(), certificate.clone()),
-            );
+                    // Ensure we didn't already order this certificate.
+                    if let Some(r) = state.last_committed.get(&certificate.origin()) {
+                        if r >= &certificate.round() {
+                            continue;
+                        }
+                    }
 
-            // Flatten the sub-dag referenced by the certificate.
-            let mut sequence = Vec::new();
-            for x in self.order_dag(&certificate, &state) {
-                // Update and clean up internal state.
-                state.update(&x, self.gc_depth);
+                    // Flatten the sub-dag referenced by the certificate.
+                    let mut sequence = Vec::new();
+                    for x in self.order_dag(&certificate, &state) {
+                        // Update and clean up internal state.
+                        state.update(&x, self.gc_depth);
 
-                // Add the certificate to the sequence.
-                sequence.push(x);
-            }
+                        // Add the certificate to the sequence.
+                        sequence.push(x);
+                    }
 
-            // Log the latest committed round of every authority (for debug).
-            if log_enabled!(log::Level::Debug) {
-                for (name, round) in &state.last_committed {
-                    debug!("Latest commit of {}: Round {}", name, round);
-                }
-            }
+                    // Log the latest committed round of every authority (for debug).
+                    if log_enabled!(log::Level::Debug) {
+                        for (name, round) in &state.last_committed {
+                            debug!("Latest commit of {}: Round {}", name, round);
+                        }
+                    }
 
-            // Print the committed sequence in the right order.
-            for certificate in sequence {
-                info!("Committed {}", certificate.header);
+                    // Print the committed sequence in the right order.
+                    for certificate in sequence {
+                        info!("Committed {}", certificate.header);
 
-                #[cfg(feature = "benchmark")]
-                for digest in certificate.header.payload.keys() {
-                    // NOTE: This log entry is used to compute performance.
-                    info!("Committed {} -> {:?}", certificate.header, digest);
+                        #[cfg(feature = "benchmark")]
+                        for digest in certificate.header.payload.keys() {
+                            // NOTE: This log entry is used to compute performance.
+                            info!("Committed {} -> {:?}", certificate.header, digest);
+                        }
+                    }
                 }
             }
         }
