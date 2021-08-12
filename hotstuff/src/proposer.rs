@@ -138,6 +138,9 @@ impl Proposer {
                     self.make_block(round, qc, tc).await;
                 }
             }
+
+            // Give the change to schedule other tasks.
+            tokio::task::yield_now().await;
         }
     }
 }
