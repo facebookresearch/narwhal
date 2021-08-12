@@ -43,7 +43,7 @@ impl Proposer {
                 name,
                 committee,
                 signature_service,
-                max_block_delay: 200,
+                max_block_delay: 2_000,
                 rx_mempool,
                 rx_message,
                 tx_loopback,

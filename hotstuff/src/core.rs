@@ -297,6 +297,7 @@ impl Core {
     }
 
     async fn process_qc(&mut self, qc: &QC) {
+        debug!("Processing {:?}", qc);
         self.advance_round(qc.round).await;
         self.update_high_qc(qc);
     }
@@ -376,6 +377,7 @@ impl Core {
 
         // Process the TC (if any). This may also allow us to advance round.
         if let Some(ref tc) = block.tc {
+            debug!("Processing (embedded) {:?}", tc);
             self.advance_round(tc.round).await;
         }
 
@@ -387,6 +389,7 @@ impl Core {
     }
 
     async fn handle_tc(&mut self, tc: TC) -> ConsensusResult<()> {
+        debug!("Processing {:?}", tc);
         self.advance_round(tc.round).await;
         if self.name == self.leader_elector.get_leader(self.round) {
             self.generate_proposal(Some(tc)).await;
