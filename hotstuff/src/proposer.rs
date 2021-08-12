@@ -9,7 +9,7 @@ use log::{debug, info};
 use network::{CancelHandler, ReliableSender};
 use primary::Certificate;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, Duration, Instant};
 
 #[derive(Debug)]
 pub struct ProposerMessage(pub Round, pub QC, pub Option<TC>);
@@ -18,12 +18,14 @@ pub struct Proposer {
     name: PublicKey,
     committee: Committee,
     signature_service: SignatureService,
+    max_block_delay: u64,
     rx_mempool: Receiver<Certificate>,
     rx_message: Receiver<ProposerMessage>,
     tx_loopback: Sender<Block>,
     tx_committer: Sender<Certificate>,
     buffer: Vec<Certificate>,
     network: ReliableSender,
+    leader: Option<(Round, QC, Option<TC>)>,
 }
 
 impl Proposer {
@@ -41,12 +43,14 @@ impl Proposer {
                 name,
                 committee,
                 signature_service,
+                max_block_delay: 200,
                 rx_mempool,
                 rx_message,
                 tx_loopback,
                 tx_committer,
                 buffer: Vec::new(),
                 network: ReliableSender::new(),
+                leader: None,
             }
             .run()
             .await;
@@ -113,11 +117,29 @@ impl Proposer {
         }
 
         // TODO: Ugly -- needed for small committee sizes.
-        sleep(Duration::from_millis(100)).await;
+        //sleep(Duration::from_millis(100)).await;
     }
 
     async fn run(&mut self) {
+        let timer = sleep(Duration::from_millis(self.max_block_delay));
+        tokio::pin!(timer);
+
         loop {
+            // Check if we can propose a new block.
+            let timer_expired = timer.is_elapsed();
+            let got_payload = !self.buffer.is_empty();
+
+            if timer_expired || got_payload {
+                if let Some((round, qc, tc)) = self.leader.take() {
+                    // Make a new block.
+                    self.make_block(round, qc, tc).await;
+
+                    // Reschedule the timer.
+                    let deadline = Instant::now() + Duration::from_millis(self.max_block_delay);
+                    timer.as_mut().reset(deadline);
+                }
+            }
+
             tokio::select! {
                 Some(certificate) = self.rx_mempool.recv() => {
                     self.tx_committer
@@ -135,12 +157,15 @@ impl Proposer {
                     }
                 },
                 Some(ProposerMessage(round, qc, tc)) = self.rx_message.recv() =>  {
-                    self.make_block(round, qc, tc).await;
+                    self.leader = Some((round, qc, tc));
+                },
+                () = &mut timer => {
+                    // Nothing to do.
                 }
             }
 
             // Give the change to schedule other tasks.
-            tokio::task::yield_now().await;
+            //tokio::task::yield_now().await;
         }
     }
 }
