@@ -9,6 +9,7 @@ use log::{debug, info};
 use network::{CancelHandler, ReliableSender};
 use primary::Certificate;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::time::{sleep, Duration};
 
 #[derive(Debug)]
 pub struct ProposerMessage(pub Round, pub QC, pub Option<TC>);
@@ -70,15 +71,6 @@ impl Proposer {
         )
         .await;
 
-        if !block.payload.is_empty() {
-            #[cfg(feature = "benchmark")]
-            for certificate in &block.payload {
-                for x in certificate.header.payload.keys() {
-                    // NOTE: This log entry is used to compute performance.
-                    info!("Created {} -> {:?}", certificate.header, x);
-                }
-            }
-        }
         info!("Created {:?}", block);
 
         // Broadcast our new block.
@@ -119,6 +111,9 @@ impl Proposer {
                 break;
             }
         }
+
+        // TODO: Ugly -- needed for small committee sizes.
+        sleep(Duration::from_millis(100)).await;
     }
 
     async fn run(&mut self) {
