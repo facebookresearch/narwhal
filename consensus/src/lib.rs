@@ -77,6 +77,12 @@ pub struct Consensus {
 
     /// The genesis certificates.
     genesis: Vec<Certificate>,
+
+    // Steady State validator sets
+    ss_validator_sets: HashMap<Round, HashSet<PublicKey>>,
+
+    // Fallback validator sets
+    fb_validator_sets: HashMap<Round, HashSet<PublicKey>>
 }
 
 impl Consensus {
@@ -95,6 +101,8 @@ impl Consensus {
                 tx_primary,
                 tx_output,
                 genesis: Certificate::genesis(&committee),
+                ss_validator_sets: HashMap::new(),
+                fb_validator_sets: HashMap::new(),
             }
             .run()
             .await;
@@ -200,6 +208,11 @@ impl Consensus {
         }
     }
 
+    fn check_steady_commit() -> bool {
+
+        false
+    }
+
     /// Returns the certificate (and the certificate's digest) originated by the leader of the
     /// specified round (if any).
     fn leader<'a>(&self, round: Round, dag: &'a Dag) -> Option<&'a (Digest, Certificate)> {
@@ -212,9 +225,10 @@ impl Consensus {
         let coin = round;
 
         // Elect the leader.
-        let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+        /*let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
         keys.sort();
-        let leader = keys[coin as usize % self.committee.size()];
+        let leader = keys[coin as usize % self.committee.size()];*/
+        let leader = self.committee.leader(round);
 
         // Return its certificate and the certificate's digest.
         dag.get(&round).map(|x| x.get(&leader)).flatten()

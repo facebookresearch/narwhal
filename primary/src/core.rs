@@ -292,13 +292,15 @@ impl Core {
                 .expect("Failed to send certificate");
         }
 
-        // Send it to the consensus layer.
+        // Send it to the consensus layer if virtual round present.
         let id = certificate.header.id.clone();
-        if let Err(e) = self.tx_consensus.send(certificate).await {
-            warn!(
-                "Failed to deliver certificate {} to the consensus: {}",
-                id, e
-            );
+        if certificate.header.virtual_round > 0 {
+            if let Err(e) = self.tx_consensus.send(certificate).await {
+                warn!(
+                    "Failed to deliver certificate {} to the consensus: {}",
+                    id, e
+                );
+            }
         }
         Ok(())
     }

@@ -33,8 +33,10 @@ pub struct Proposer {
     /// Sends newly created headers to the `Core`.
     tx_core: Sender<Header>,
 
-    /// The current round of the dag.
+    /// The current physical round of the dag.
     round: Round,
+    // The current virtual round of the dag.
+    virtual_round: Round,
     /// Holds the certificates' ids waiting to be included in the next header.
     last_parents: Vec<Certificate>,
     /// Holds the batches' digests waiting to be included in the next header.
@@ -72,6 +74,7 @@ impl Proposer {
                 rx_workers,
                 tx_core,
                 round: 1,
+                virtual_round: 1,
                 last_parents: genesis,
                 digests: Vec::with_capacity(2 * header_size),
                 payload_size: 0,
@@ -87,6 +90,7 @@ impl Proposer {
         let header = Header::new(
             self.name,
             self.round,
+            0,
             self.digests.drain(..).collect(),
             self.last_parents.drain(..).map(|x| x.digest()).collect(),
             &mut self.signature_service,
@@ -107,12 +111,30 @@ impl Proposer {
             .expect("Failed to send header");
     }
 
+    async fn create_header(&mut self) -> Header {
+        // Make a new header.
+        let header = Header::new(
+            self.name,
+            self.round,
+            0,
+            self.digests.drain(..).collect(),
+            self.last_parents.drain(..).map(|x| x.digest()).collect(),
+            &mut self.signature_service,
+        )
+        .await;
+        debug!("Created {:?}", header);
+
+        header
+    }
+
+
     // Main loop listening to incoming messages.
     pub async fn run(&mut self) {
         debug!("Dag starting at round {}", self.round);
 
         let timer = sleep(Duration::from_millis(self.max_header_delay));
         let dag_timer = sleep(Duration::from_millis(self.max_header_delay));
+        let mut advance_virtual_round = false;
         tokio::pin!(timer);
         tokio::pin!(dag_timer);
 
@@ -129,13 +151,25 @@ impl Proposer {
             // change core to send parents one by one instead of 2f+1 (same logic for advance round condition)
             // make aggregator on the proposer
             if (timer_expired || enough_digests) && enough_parents {
+                let mut header = self.create_header().await;
                 // Make a new header.
-                self.make_header().await;
+                //self.make_header().await;
                 self.payload_size = 0;
+
+                if advance_virtual_round {
+                    header.virtual_round = self.virtual_round;
+                    advance_virtual_round = false;
+                }
+
+                self.tx_core
+                    .send(header)
+                    .await
+                    .expect("Failed to send header");
 
                 // Reschedule the timer.
                 let deadline = Instant::now() + Duration::from_millis(self.max_header_delay);
                 timer.as_mut().reset(deadline);
+
             }
 
             tokio::select! {
@@ -145,7 +179,15 @@ impl Proposer {
                         continue;
                     }
 
-                    let leader = self.committee.leader(round);
+                    // Advance to the next round.
+                    self.round = round + 1;
+                    debug!("Dag moved to round {}", self.round);
+
+                    // Signal that we have enough parent certificates to propose a new header.
+                    self.last_parents = parents;
+
+
+                    let leader = self.committee.leader(self.virtual_round);
                     // For each parent we check if there is a vote for the leader
                     let leader_votes = self.last_parents
                                             .clone()
@@ -155,7 +197,7 @@ impl Proposer {
                     // Check if the timer has expired
                     let dag_timer_expired = dag_timer.is_elapsed();
                     // The condition for advancing an odd round is at least one parent has a vote for the leader
-                    if self.round % 2 == 1 {
+                    if self.virtual_round % 2 == 1 {
                         // If there are 0 leader votes then don't advance the round and the timer has not expired
                         if leader_votes.clone().count() == 0 && !dag_timer_expired {
                             continue;
@@ -163,19 +205,21 @@ impl Proposer {
                     }
 
                     // The condition for advancing an even round are 2f+1 votes to the steady state leader
-                    if self.round % 2 == 0 {
+                    if self.virtual_round % 2 == 0 {
                         // If less than 2f+1 votes then don't advance the round and check for additional timeout
                         if leader_votes.clone().count() < usize::try_from(self.committee.clone().quorum_threshold()).unwrap() && !dag_timer_expired {
                             continue;
                         }
                     }
 
-                    // Advance to the next round.
-                    self.round = round + 1;
-                    debug!("Dag moved to round {}", self.round);
+                    // Advance to the next virtual round.
+                    self.virtual_round += 1;
+                    debug!("Dag moved to virtual round {}", self.virtual_round);
+                    advance_virtual_round = true;
+
 
                     // Signal that we have enough parent certificates to propose a new header.
-                    self.last_parents = parents;
+                    //self.last_parents = parents;
                 }
                 Some((digest, worker_id)) = self.rx_workers.recv() => {
                     self.payload_size += digest.size();

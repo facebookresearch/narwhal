@@ -14,6 +14,7 @@ use std::fmt;
 pub struct Header {
     pub author: PublicKey,
     pub round: Round,
+    pub virtual_round: Round,
     pub payload: BTreeMap<Digest, WorkerId>,
     pub parents: BTreeSet<Digest>,
     pub id: Digest,
@@ -24,6 +25,7 @@ impl Header {
     pub async fn new(
         author: PublicKey,
         round: Round,
+        virtual_round: Round,
         payload: BTreeMap<Digest, WorkerId>,
         parents: BTreeSet<Digest>,
         signature_service: &mut SignatureService,
@@ -31,6 +33,7 @@ impl Header {
         let header = Self {
             author,
             round,
+            virtual_round,
             payload,
             parents,
             id: Digest::default(),
