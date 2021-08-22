@@ -63,6 +63,7 @@ impl Primary {
         committee: Committee,
         parameters: Parameters,
         store: Store,
+        #[cfg(feature = "dolphin")] virtual_round: Arc<AtomicU64>,
         tx_consensus: Sender<Certificate>,
         rx_consensus: Receiver<Certificate>,
     ) {
@@ -168,7 +169,7 @@ impl Primary {
             name,
             committee.clone(),
             store.clone(),
-            consensus_round,
+            consensus_round.clone(),
             parameters.gc_depth,
             parameters.sync_retry_delay,
             parameters.sync_retry_nodes,
@@ -180,6 +181,8 @@ impl Primary {
         // `Core` for further processing.
         CertificateWaiter::spawn(
             store.clone(),
+            consensus_round,
+            parameters.gc_depth,
             /* rx_synchronizer */ rx_sync_certificates,
             /* tx_core */ tx_certificates_loopback,
         );
@@ -192,6 +195,8 @@ impl Primary {
             signature_service,
             parameters.header_size,
             parameters.max_header_delay,
+            #[cfg(feature = "dolphin")]
+            virtual_round,
             /* rx_core */ rx_parents,
             /* rx_workers */ rx_our_digests,
             /* tx_core */ tx_headers,

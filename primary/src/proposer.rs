@@ -7,6 +7,10 @@ use crypto::{Digest, PublicKey, SignatureService};
 use log::debug;
 #[cfg(feature = "benchmark")]
 use log::info;
+#[cfg(feature = "dolphin")]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "dolphin")]
+use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
@@ -24,6 +28,9 @@ pub struct Proposer {
     header_size: usize,
     /// The maximum delay to wait for batches' digests.
     max_header_delay: u64,
+    #[cfg(feature = "dolphin")]
+    /// The current consensus round.
+    virtual_round: Arc<AtomicU64>,
 
     /// Receives the parents to include in the next header (along with their round number).
     rx_core: Receiver<(Vec<Digest>, Round)>,
@@ -50,6 +57,7 @@ impl Proposer {
         signature_service: SignatureService,
         header_size: usize,
         max_header_delay: u64,
+        #[cfg(feature = "dolphin")] virtual_round: Arc<AtomicU64>,
         rx_core: Receiver<(Vec<Digest>, Round)>,
         rx_workers: Receiver<(Digest, WorkerId)>,
         tx_core: Sender<Header>,
@@ -65,6 +73,8 @@ impl Proposer {
                 signature_service,
                 header_size,
                 max_header_delay,
+                #[cfg(feature = "dolphin")]
+                virtual_round,
                 rx_core,
                 rx_workers,
                 tx_core,
@@ -83,6 +93,8 @@ impl Proposer {
         let header = Header::new(
             self.name,
             self.round,
+            #[cfg(feature = "dolphin")]
+            self.virtual_round.load(Ordering::Relaxed),
             self.digests.drain(..).collect(),
             self.last_parents.drain(..).collect(),
             &mut self.signature_service,

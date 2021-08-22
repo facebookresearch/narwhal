@@ -29,3 +29,4 @@ rand = "0.7.3"
 
 [features]
 benchmark = []
+dolphin = []

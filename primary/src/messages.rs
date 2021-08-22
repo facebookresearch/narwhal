@@ -14,6 +14,8 @@ use std::fmt;
 pub struct Header {
     pub author: PublicKey,
     pub round: Round,
+    #[cfg(feature = "dolphin")]
+    virtual_round: Round,
     pub payload: BTreeMap<Digest, WorkerId>,
     pub parents: BTreeSet<Digest>,
     pub id: Digest,
@@ -24,6 +26,7 @@ impl Header {
     pub async fn new(
         author: PublicKey,
         round: Round,
+        #[cfg(feature = "dolphin")] virtual_round: Round,
         payload: BTreeMap<Digest, WorkerId>,
         parents: BTreeSet<Digest>,
         signature_service: &mut SignatureService,
@@ -31,6 +34,8 @@ impl Header {
         let header = Self {
             author,
             round,
+            #[cfg(feature = "dolphin")]
+            virtual_round,
             payload,
             parents,
             id: Digest::default(),
@@ -72,6 +77,8 @@ impl Hash for Header {
         let mut hasher = Sha512::new();
         hasher.update(&self.author);
         hasher.update(self.round.to_le_bytes());
+        #[cfg(feature = "dolphin")]
+        hasher.update(self.virtual_round.to_le_bytes());
         for (x, y) in &self.payload {
             hasher.update(x);
             hasher.update(y.to_le_bytes());
@@ -214,12 +221,17 @@ impl Certificate {
         Signature::verify_batch(&self.digest(), &self.votes).map_err(DagError::from)
     }
 
+    pub fn origin(&self) -> PublicKey {
+        self.header.author
+    }
+
     pub fn round(&self) -> Round {
         self.header.round
     }
 
-    pub fn origin(&self) -> PublicKey {
-        self.header.author
+    #[cfg(feature = "dolphin")]
+    pub fn virtual_round(&self) -> Round {
+        self.header.virtual_round
     }
 }
 
