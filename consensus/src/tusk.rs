@@ -10,7 +10,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 #[path = "tests/tusk_tests.rs"]
 pub mod tusk_tests;
 
-pub struct Consensus {
+pub struct Tusk {
     /// The committee information.
     committee: Committee,
     /// The depth of the garbage collector.
@@ -28,7 +28,7 @@ pub struct Consensus {
     genesis: Vec<Certificate>,
 }
 
-impl Consensus {
+impl Tusk {
     pub fn spawn(
         committee: Committee,
         gc_depth: Round,

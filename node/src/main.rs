@@ -4,7 +4,10 @@ use clap::{crate_name, crate_version, App, AppSettings, ArgMatches, SubCommand};
 use config::Export as _;
 use config::Import as _;
 use config::{Committee, KeyPair, Parameters, WorkerId};
-use consensus::Consensus;
+#[cfg(feature = "dolphin")]
+use consensus::Dolphin;
+#[cfg(not(feature = "dolphin"))]
+use consensus::Tusk;
 use env_logger::Env;
 use primary::{Certificate, Primary};
 use store::Store;
@@ -96,21 +99,40 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
         // Spawn the primary and consensus core.
         ("primary", _) => {
             let (tx_new_certificates, rx_new_certificates) = channel(CHANNEL_CAPACITY);
-            let (tx_feedback, rx_feedback) = channel(CHANNEL_CAPACITY);
+            let (tx_commit, rx_commit) = channel(CHANNEL_CAPACITY);
+            let (tx_metadata, rx_metadata) = channel(CHANNEL_CAPACITY);
+            #[cfg(not(feature = "dolphin"))]
+            {
+                Tusk::spawn(
+                    committee.clone(),
+                    parameters.gc_depth,
+                    /* rx_primary */ rx_new_certificates,
+                    tx_commit,
+                    tx_output,
+                );
+                let _not_used = tx_metadata;
+            }
+            #[cfg(feature = "dolphin")]
+            {
+                Dolphin::spawn(
+                    keypair.name,
+                    committee.clone(),
+                    parameters.timeout,
+                    parameters.gc_depth,
+                    /* rx_primary */ rx_new_certificates,
+                    tx_commit,
+                    tx_metadata,
+                    tx_output,
+                );
+            }
             Primary::spawn(
                 keypair,
-                committee.clone(),
+                committee,
                 parameters.clone(),
                 store,
-                /* tx_consensus */ tx_new_certificates,
-                /* rx_consensus */ rx_feedback,
-            );
-            Consensus::spawn(
-                committee,
-                parameters.gc_depth,
-                /* rx_primary */ rx_new_certificates,
-                /* tx_primary */ tx_feedback,
-                tx_output,
+                /* tx_output */ tx_new_certificates,
+                rx_commit,
+                rx_metadata,
             );
         }
 

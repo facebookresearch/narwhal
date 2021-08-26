@@ -274,14 +274,14 @@ impl Core {
 
         // Ensure we have all the ancestors of this certificate yet (if we didn't already garbage collect them).
         // If we don't, the synchronizer will gather them and trigger re-processing of this certificate.
-        if certificate.round() > self.gc_round + 1 {
-            if !self.synchronizer.deliver_certificate(&certificate).await? {
-                debug!(
-                    "Processing of {:?} suspended: missing ancestors",
-                    certificate
-                );
-                return Ok(());
-            }
+        if certificate.round() > self.gc_round + 1
+            && !self.synchronizer.deliver_certificate(&certificate).await?
+        {
+            debug!(
+                "Processing of {:?} suspended: missing ancestors",
+                certificate
+            );
+            return Ok(());
         }
 
         // Store the certificate.

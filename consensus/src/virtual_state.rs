@@ -75,7 +75,7 @@ impl VirtualState {
     }
 
     /// Cleanup the internal state after committing a certificate.
-    pub fn cleanup(&mut self, certificate: &Certificate) {
+    pub fn cleanup(&mut self, _certificate: &Certificate) {
         // TODO
 
         /*

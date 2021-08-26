@@ -25,6 +25,7 @@ consensus = { path = "../consensus" }
 
 [features]
 benchmark = ["worker/benchmark", "primary/benchmark", "consensus/benchmark"]
+dolphin = ["consensus/dolphin", "config/dolphin"]
 
 [[bin]]         
 name = "benchmark_client"   

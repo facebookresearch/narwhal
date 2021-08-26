@@ -3,13 +3,14 @@ use crate::committer::Committer;
 use crate::state::State;
 use crate::virtual_state::VirtualState;
 use config::{Committee, Stake};
-use crypto::{Digest, PublicKey};
+use crypto::PublicKey;
 use log::{debug, info, log_enabled, warn};
-use primary::{Certificate, Round};
+use primary::{Certificate, Metadata, Round};
+use std::collections::BTreeSet;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
-pub struct Consensus {
+pub struct Dolphin {
     /// The name of this authority.
     name: PublicKey,
     /// The committee information.
@@ -25,7 +26,7 @@ pub struct Consensus {
     /// Outputs the sequence of ordered certificates to the primary (for cleanup and feedback).
     tx_commit: Sender<Certificate>,
     /// Sends the virtual parents to the primary's proposer.
-    tx_parents: Sender<(Vec<Digest>, Round)>,
+    tx_parents: Sender<Metadata>,
     /// Outputs the sequence of ordered certificates to the application layer.
     tx_output: Sender<Certificate>,
 
@@ -37,7 +38,8 @@ pub struct Consensus {
     committer: Committer,
 }
 
-impl Consensus {
+impl Dolphin {
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         name: PublicKey,
         committee: Committee,
@@ -45,7 +47,7 @@ impl Consensus {
         gc_depth: Round,
         rx_certificate: Receiver<Certificate>,
         tx_commit: Sender<Certificate>,
-        tx_parents: Sender<(Vec<Digest>, Round)>,
+        tx_parents: Sender<Metadata>,
         tx_output: Sender<Certificate>,
     ) {
         tokio::spawn(async move {
@@ -86,7 +88,7 @@ impl Consensus {
 
                 // Send the virtual parents to the primary's proposer.
                 self.tx_parents
-                    .send(quorum.unwrap())
+                    .send(Metadata::new(virtual_round, quorum.unwrap()))
                     .await
                     .expect("Failed to send virtual parents to primary");
 
@@ -143,12 +145,12 @@ impl Consensus {
                     }
 
                     // Try to advance to the next (virtual) round.
-                    let (parents, authors): (Vec<_>, Vec<_>) = virtual_state
+                    let (parents, authors): (BTreeSet<_>, Vec<_>) = virtual_state
                         .dag
                         .get(&virtual_round)
                         .expect("We just added a certificate with this round")
                         .values()
-                        .map(|(digest, x)| (digest.clone(), x.origin()))
+                        .map(|(digest, x)| ((digest.clone(), x.round()), x.origin()))
                         .collect::<Vec<_>>()
                         .iter()
                         .cloned()
@@ -159,7 +161,7 @@ impl Consensus {
                             .iter()
                             .map(|x| self.committee.stake(x))
                             .sum::<Stake>() >= self.committee.quorum_threshold())
-                            .then(|| (parents, virtual_round));
+                            .then(|| parents);
 
                         advance_early = match virtual_round % 2 {
                             0 => self.qc(virtual_round, &virtual_state) || self.tc(virtual_round, &virtual_state),

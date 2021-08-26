@@ -5,7 +5,7 @@ use crate::error::DagError;
 use crate::garbage_collector::GarbageCollector;
 use crate::header_waiter::HeaderWaiter;
 use crate::helper::Helper;
-use crate::messages::{Certificate, Header, Vote};
+use crate::messages::{Certificate, Header, Metadata, Vote};
 use crate::payload_receiver::PayloadReceiver;
 use crate::proposer::Proposer;
 use crate::synchronizer::Synchronizer;
@@ -63,9 +63,9 @@ impl Primary {
         committee: Committee,
         parameters: Parameters,
         store: Store,
-        #[cfg(feature = "dolphin")] virtual_round: Arc<AtomicU64>,
-        tx_consensus: Sender<Certificate>,
-        rx_consensus: Receiver<Certificate>,
+        tx_output: Sender<Certificate>,
+        rx_commit: Receiver<Certificate>,
+        rx_metadata: Receiver<Metadata>,
     ) {
         let (tx_others_digests, rx_others_digests) = channel(CHANNEL_CAPACITY);
         let (tx_our_digests, rx_our_digests) = channel(CHANNEL_CAPACITY);
@@ -152,12 +152,12 @@ impl Primary {
             /* rx_header_waiter */ rx_headers_loopback,
             /* rx_certificate_waiter */ rx_certificates_loopback,
             /* rx_proposer */ rx_headers,
-            tx_consensus,
+            /* rx_consensus */ tx_output,
             /* tx_proposer */ tx_parents,
         );
 
         // Keeps track of the latest consensus round and allows other tasks to clean up their their internal state
-        GarbageCollector::spawn(&name, &committee, consensus_round.clone(), rx_consensus);
+        GarbageCollector::spawn(&name, &committee, consensus_round.clone(), rx_commit);
 
         // Receives batch digests from other workers. They are only used to validate headers.
         PayloadReceiver::spawn(store.clone(), /* rx_workers */ rx_others_digests);
@@ -195,11 +195,10 @@ impl Primary {
             signature_service,
             parameters.header_size,
             parameters.max_header_delay,
-            #[cfg(feature = "dolphin")]
-            virtual_round,
             /* rx_core */ rx_parents,
             /* rx_workers */ rx_our_digests,
             /* tx_core */ tx_headers,
+            /* rx_consensus */ rx_metadata,
         );
 
         // The `Helper` is dedicated to reply to certificates requests from other primaries.

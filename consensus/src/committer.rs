@@ -42,6 +42,9 @@ impl Committer {
                     sequence.push(x);
                 }
             }
+
+            // Cleanup the virtual dag.
+            virtual_state.cleanup(&leader);
         }
         sequence
     }

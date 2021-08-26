@@ -10,14 +10,45 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::convert::TryInto;
 use std::fmt;
 
+// TODO: Make metadata generic.
+
+#[derive(Clone, Serialize, Deserialize, Default, Debug)]
+pub struct Metadata {
+    pub virtual_round: Round,
+    pub virtual_parents: BTreeSet<(Digest, Round)>,
+    /// A linearized (encoded) version of the fields above, needed to implement AsRef<[u8]>.
+    linear: Vec<u8>,
+}
+
+impl Metadata {
+    pub fn new(virtual_round: Round, virtual_parents: BTreeSet<(Digest, Round)>) -> Self {
+        let mut linear: Vec<u8> = Vec::new();
+        linear.extend(virtual_round.to_le_bytes().iter());
+        for (digest, round) in &virtual_parents {
+            linear.extend(digest.0.iter());
+            linear.extend(round.to_le_bytes().iter());
+        }
+        Self {
+            virtual_round,
+            virtual_parents,
+            linear,
+        }
+    }
+}
+
+impl AsRef<[u8]> for Metadata {
+    fn as_ref(&self) -> &[u8] {
+        &self.linear
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct Header {
     pub author: PublicKey,
     pub round: Round,
-    #[cfg(feature = "dolphin")]
-    virtual_round: Round,
     pub payload: BTreeMap<Digest, WorkerId>,
     pub parents: BTreeSet<Digest>,
+    metadata: Option<Metadata>,
     pub id: Digest,
     pub signature: Signature,
 }
@@ -26,18 +57,17 @@ impl Header {
     pub async fn new(
         author: PublicKey,
         round: Round,
-        #[cfg(feature = "dolphin")] virtual_round: Round,
         payload: BTreeMap<Digest, WorkerId>,
         parents: BTreeSet<Digest>,
+        metadata: Option<Metadata>,
         signature_service: &mut SignatureService,
     ) -> Self {
         let header = Self {
             author,
             round,
-            #[cfg(feature = "dolphin")]
-            virtual_round,
             payload,
             parents,
+            metadata,
             id: Digest::default(),
             signature: Signature::default(),
         };
@@ -77,14 +107,15 @@ impl Hash for Header {
         let mut hasher = Sha512::new();
         hasher.update(&self.author);
         hasher.update(self.round.to_le_bytes());
-        #[cfg(feature = "dolphin")]
-        hasher.update(self.virtual_round.to_le_bytes());
         for (x, y) in &self.payload {
             hasher.update(x);
             hasher.update(y.to_le_bytes());
         }
         for x in &self.parents {
             hasher.update(x);
+        }
+        if let Some(metadata) = &self.metadata {
+            hasher.update(metadata);
         }
         Digest(hasher.finalize().as_slice()[..32].try_into().unwrap())
     }
@@ -231,14 +262,20 @@ impl Certificate {
 
     #[cfg(feature = "dolphin")]
     pub fn virtual_round(&self) -> Round {
-        // TODO:
-        unimplemented!();
+        self.header
+            .metadata
+            .as_ref()
+            .map_or_else(|| 0, |x| x.virtual_round)
     }
 
     #[cfg(feature = "dolphin")]
     pub fn virtual_parents(&self) -> Vec<&Digest> {
-        // TODO
-        unimplemented!();
+        self.header
+            .metadata
+            .as_ref()
+            .map_or_else(Vec::default, |x| {
+                x.virtual_parents.iter().map(|(x, _)| x).collect()
+            })
     }
 }
 

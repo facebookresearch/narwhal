@@ -1,4 +1,5 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
+use crate::messages::Metadata;
 use crate::messages::{Certificate, Header};
 use crate::primary::Round;
 use config::{Committee, WorkerId};
@@ -7,10 +8,7 @@ use crypto::{Digest, PublicKey, SignatureService};
 use log::debug;
 #[cfg(feature = "benchmark")]
 use log::info;
-#[cfg(feature = "dolphin")]
-use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(feature = "dolphin")]
-use std::sync::Arc;
+use std::collections::VecDeque;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
@@ -28,9 +26,6 @@ pub struct Proposer {
     header_size: usize,
     /// The maximum delay to wait for batches' digests.
     max_header_delay: u64,
-    #[cfg(feature = "dolphin")]
-    /// The current consensus round.
-    virtual_round: Arc<AtomicU64>,
 
     /// Receives the parents to include in the next header (along with their round number).
     rx_core: Receiver<(Vec<Digest>, Round)>,
@@ -38,6 +33,8 @@ pub struct Proposer {
     rx_workers: Receiver<(Digest, WorkerId)>,
     /// Sends newly created headers to the `Core`.
     tx_core: Sender<Header>,
+    /// The current consensus round.
+    rx_consensus: Receiver<Metadata>,
 
     /// The current round of the dag.
     round: Round,
@@ -47,6 +44,8 @@ pub struct Proposer {
     digests: Vec<(Digest, WorkerId)>,
     /// Keeps track of the size (in bytes) of batches' digests that we received so far.
     payload_size: usize,
+    /// The metadata to include in the next header.
+    metadata: VecDeque<Metadata>,
 }
 
 impl Proposer {
@@ -57,10 +56,10 @@ impl Proposer {
         signature_service: SignatureService,
         header_size: usize,
         max_header_delay: u64,
-        #[cfg(feature = "dolphin")] virtual_round: Arc<AtomicU64>,
         rx_core: Receiver<(Vec<Digest>, Round)>,
         rx_workers: Receiver<(Digest, WorkerId)>,
         tx_core: Sender<Header>,
+        rx_consensus: Receiver<Metadata>,
     ) {
         let genesis = Certificate::genesis(committee)
             .iter()
@@ -73,15 +72,15 @@ impl Proposer {
                 signature_service,
                 header_size,
                 max_header_delay,
-                #[cfg(feature = "dolphin")]
-                virtual_round,
                 rx_core,
                 rx_workers,
                 tx_core,
+                rx_consensus,
                 round: 1,
                 last_parents: genesis,
                 digests: Vec::with_capacity(2 * header_size),
                 payload_size: 0,
+                metadata: VecDeque::new(),
             }
             .run()
             .await;
@@ -93,10 +92,9 @@ impl Proposer {
         let header = Header::new(
             self.name,
             self.round,
-            #[cfg(feature = "dolphin")]
-            self.virtual_round.load(Ordering::Relaxed),
             self.digests.drain(..).collect(),
             self.last_parents.drain(..).collect(),
+            self.metadata.pop_back(),
             &mut self.signature_service,
         )
         .await;
@@ -157,6 +155,9 @@ impl Proposer {
                 Some((digest, worker_id)) = self.rx_workers.recv() => {
                     self.payload_size += digest.size();
                     self.digests.push((digest, worker_id));
+                }
+                Some(metadata) = self.rx_consensus.recv() => {
+                    self.metadata.push_front(metadata)
                 }
                 () = &mut timer => {
                     // Nothing to do.
