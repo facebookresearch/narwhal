@@ -29,13 +29,12 @@ impl Committer {
         if let Some(leader) = self.update_validator_mode(&certificate, virtual_state) {
             // Get an ordered list of past leaders that are linked to the current leader.
             let last_committed_wave = (state.last_committed_round + 1) / 2;
-            for leader in self
+            while let Some(leader) = self
                 .order_leaders(&leader, &virtual_state, last_committed_wave)
-                .iter()
-                .rev()
+                .pop()
             {
                 // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
-                for x in state.flatten(leader) {
+                for x in state.flatten(&leader) {
                     // Update and clean up internal state.
                     state.update(&x);
                     // Add the certificate to the sequence.
@@ -44,7 +43,7 @@ impl Committer {
             }
 
             // Cleanup the virtual dag.
-            virtual_state.cleanup(&leader);
+            virtual_state.cleanup(&state.last_committed_round);
         }
         sequence
     }
@@ -218,7 +217,7 @@ impl Committer {
         let mut to_commit = vec![leader.clone()];
         let steady_wave = (leader.virtual_round() + 1) / 2;
         let mut leader = leader;
-        for w in (last_committed_wave..steady_wave).rev() {
+        for w in (last_committed_wave + 1..steady_wave).rev() {
             let (_, v) = state
                 .dag
                 .get(&(2 * w + 1))

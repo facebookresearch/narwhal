@@ -75,38 +75,27 @@ impl VirtualState {
     }
 
     /// Cleanup the internal state after committing a certificate.
-    pub fn cleanup(&mut self, _certificate: &Certificate) {
-        // TODO
-
-        /*
-        self.last_committed
-            .entry(certificate.origin())
-            .and_modify(|r| *r = max(*r, certificate.round()))
-            .or_insert_with(|| certificate.round());
-
-        let last_committed_round = *self.last_committed.values().max().unwrap();
-        self.last_committed_round = last_committed_round;
-
-        let gc_depth = self.gc_depth;
-        for (name, round) in &self.last_committed {
-            self.dag.retain(|r, authorities| {
-                authorities.retain(|n, _| n != name || r >= round);
-                !authorities.is_empty() && r + gc_depth >= last_committed_round
-            });
-        }
-        */
+    pub fn cleanup(&mut self, last_committed_round: &Round) {
+        let last_committed_wave = (last_committed_round + 1) / 2;
+        self.dag.retain(|r, _| r > last_committed_round);
+        self.steady_authorities_sets
+            .retain(|w, _| w > &last_committed_wave);
+        self.fallback_authorities_sets
+            .retain(|w, _| w > &last_committed_wave);
     }
 
     /// Returns the certificate (and the certificate's digest) originated by the steady-state leader
     /// of the specified round (if any).
     pub fn steady_leader(&self, round: Round) -> Option<&(Digest, Certificate)> {
         #[cfg(test)]
-        let round = 0;
+        let seed = 0;
+        #[cfg(not(test))]
+        let seed = round;
 
         // Elect the leader.
         let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
         keys.sort();
-        let leader = keys[round as usize % self.committee.size()];
+        let leader = keys[seed as usize % self.committee.size()];
 
         // Return its certificate and the certificate's digest.
         self.dag.get(&round).map(|x| x.get(&leader)).flatten()
@@ -121,7 +110,7 @@ impl VirtualState {
         #[cfg(test)]
         let coin = 0;
         #[cfg(not(test))]
-        let coin = round;
+        let coin = round + 1;
 
         // Elect the leader.
         let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
