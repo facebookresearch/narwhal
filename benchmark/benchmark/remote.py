@@ -136,7 +136,7 @@ class Bench:
         output = c.run(cmd, hide=True)
         self._check_stderr(output)
 
-    def _update(self, hosts, collocate):
+    def _update(self, hosts, collocate, protocol):
         if collocate:
             ips = list(set(hosts))
         else:
@@ -150,7 +150,7 @@ class Bench:
             f'(cd {self.settings.repo_name} && git checkout -f {self.settings.branch})',
             f'(cd {self.settings.repo_name} && git pull -f)',
             'source $HOME/.cargo/env',
-            f'(cd {self.settings.repo_name}/node && {CommandMaker.compile()})',
+            f'(cd {self.settings.repo_name}/node && {CommandMaker.compile(protocol)})',
             CommandMaker.alias_binaries(
                 f'./{self.settings.repo_name}/target/release/'
             )
@@ -278,27 +278,30 @@ class Bench:
 
         # Download log files.
         workers_addresses = committee.workers_addresses(faults)
-        progress = progress_bar(workers_addresses, prefix='Downloading workers logs:')
+        progress = progress_bar(
+            workers_addresses, prefix='Downloading workers logs:')
         for i, addresses in enumerate(progress):
             for id, address in addresses:
                 host = Committee.ip(address)
-                c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+                c = Connection(host, user='ubuntu',
+                               connect_kwargs=self.connect)
                 c.get(
-                    PathMaker.client_log_file(i, id), 
+                    PathMaker.client_log_file(i, id),
                     local=PathMaker.client_log_file(i, id)
                 )
                 c.get(
-                    PathMaker.worker_log_file(i, id), 
+                    PathMaker.worker_log_file(i, id),
                     local=PathMaker.worker_log_file(i, id)
                 )
 
         primary_addresses = committee.primary_addresses(faults)
-        progress = progress_bar(primary_addresses, prefix='Downloading primaries logs:')
+        progress = progress_bar(
+            primary_addresses, prefix='Downloading primaries logs:')
         for i, address in enumerate(progress):
             host = Committee.ip(address)
             c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
             c.get(
-                PathMaker.primary_log_file(i), 
+                PathMaker.primary_log_file(i),
                 local=PathMaker.primary_log_file(i)
             )
 
@@ -323,7 +326,11 @@ class Bench:
 
         # Update nodes.
         try:
-            self._update(selected_hosts, bench_parameters.collocate)
+            self._update(
+                selected_hosts,
+                bench_parameters.collocate,
+                bench_parameters.protocol
+            )
         except (GroupException, ExecutionError) as e:
             e = FabricError(e) if isinstance(e, GroupException) else e
             raise BenchError('Failed to update nodes', e)
@@ -357,11 +364,11 @@ class Bench:
                         logger = self._logs(committee_copy, faults)
                         logger.print(PathMaker.result_file(
                             faults,
-                            n, 
+                            n,
                             bench_parameters.workers,
                             bench_parameters.collocate,
-                            r, 
-                            bench_parameters.tx_size, 
+                            r,
+                            bench_parameters.tx_size,
                         ))
                     except (subprocess.SubprocessError, GroupException, ParseError) as e:
                         self.kill(hosts=selected_hosts)

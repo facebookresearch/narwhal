@@ -17,8 +17,9 @@ class CommandMaker:
         return f'rm -r {PathMaker.logs_path()} ; mkdir -p {PathMaker.logs_path()}'
 
     @staticmethod
-    def compile():
-        return 'cargo build --quiet --release --features benchmark'
+    def compile(protocol='tusk'):
+        protocol = '' if protocol == 'tusk' else protocol
+        return f'cargo build --quiet --release --features benchmark {protocol}'
 
     @staticmethod
     def generate_key(filename):

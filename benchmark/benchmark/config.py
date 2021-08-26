@@ -203,7 +203,6 @@ class BenchParameters:
                 raise ConfigError('Missing input rate')
             self.rate = [int(x) for x in rate]
 
-            
             self.workers = int(json['workers'])
 
             if 'collocate' in json:
@@ -212,10 +211,18 @@ class BenchParameters:
                 self.collocate = True
 
             self.tx_size = int(json['tx_size'])
-           
+
             self.duration = int(json['duration'])
 
             self.runs = int(json['runs']) if 'runs' in json else 1
+
+            if 'protocol' not in json:
+                self.protocol = 'tusk'
+            elif json['protocol'] == 'tusk' or json['protocol'] == 'dolphin':
+                self.protocol = json['protocol']
+            else:
+                raise ConfigError('Unsupported protocol')
+
         except KeyError as e:
             raise ConfigError(f'Malformed bench parameters: missing key {e}')
 
