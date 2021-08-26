@@ -75,8 +75,26 @@ impl VirtualState {
     }
 
     /// Cleanup the internal state after committing a certificate.
-    pub fn cleanup(&mut self, certificate: &Certificate, gc_depth: Round) {
+    pub fn cleanup(&mut self, certificate: &Certificate) {
         // TODO
+
+        /*
+        self.last_committed
+            .entry(certificate.origin())
+            .and_modify(|r| *r = max(*r, certificate.round()))
+            .or_insert_with(|| certificate.round());
+
+        let last_committed_round = *self.last_committed.values().max().unwrap();
+        self.last_committed_round = last_committed_round;
+
+        let gc_depth = self.gc_depth;
+        for (name, round) in &self.last_committed {
+            self.dag.retain(|r, authorities| {
+                authorities.retain(|n, _| n != name || r >= round);
+                !authorities.is_empty() && r + gc_depth >= last_committed_round
+            });
+        }
+        */
     }
 
     /// Returns the certificate (and the certificate's digest) originated by the steady-state leader

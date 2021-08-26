@@ -16,6 +16,7 @@ impl Committer {
         Self { committee }
     }
 
+    /// Try to commit. If we succeed, output am ordered sequence.
     pub fn try_commit(
         &self,
         certificate: &Certificate,
@@ -23,10 +24,13 @@ impl Committer {
         virtual_state: &mut VirtualState,
     ) -> Vec<Certificate> {
         let mut sequence = Vec::new();
+
+        // Update the leader mode to decide whether we can commit the leader.
         if let Some(leader) = self.update_validator_mode(&certificate, virtual_state) {
+            // Get an ordered list of past leaders that are linked to the current leader.
             let last_committed_wave = (state.last_committed_round + 1) / 2;
             for leader in self
-                .commit_leader(&leader, &virtual_state, last_committed_wave)
+                .order_leaders(&leader, &virtual_state, last_committed_wave)
                 .iter()
                 .rev()
             {
@@ -34,7 +38,6 @@ impl Committer {
                 for x in state.flatten(leader) {
                     // Update and clean up internal state.
                     state.update(&x);
-
                     // Add the certificate to the sequence.
                     sequence.push(x);
                 }
@@ -43,7 +46,7 @@ impl Committer {
         sequence
     }
 
-    /// Updates the authorities mode (steady state vs fallback) and returns whether we can commit
+    /// Updates the authorities mode (steady state vs fallback) and return whether we can commit
     /// the leader of the wave.
     fn update_validator_mode(
         &self,
@@ -53,6 +56,7 @@ impl Committer {
         let steady_wave = (certificate.virtual_round() + 1) / 2;
         let fallback_wave = (certificate.virtual_round() + 1) / 4;
 
+        // If we already updated the validator mode for this wave, there is nothing else to do.
         if state
             .steady_authorities_sets
             .entry(steady_wave)
@@ -67,50 +71,59 @@ impl Committer {
             return None;
         }
 
+        // Check whether the author of the certificate is in the steady state for this round.
         if state
             .steady_authorities_sets
             .entry(steady_wave - 1)
             .or_insert_with(HashSet::new)
             .contains(&certificate.origin())
-            && self.check_steady_commit(certificate, steady_wave - 1, state)
         {
-            state
-                .steady_authorities_sets
-                .get_mut(&steady_wave)
-                .unwrap()
-                .insert(certificate.origin());
-            Some(
+            let leader = self.check_steady_commit(certificate, steady_wave - 1, state);
+            if leader.is_some() {
+                debug!(
+                    "{} is in the steady state in wave {}",
+                    certificate.origin(),
+                    steady_wave
+                );
                 state
-                    .steady_leader(steady_wave - 1)
-                    .map(|(_, x)| x.clone())
-                    .unwrap(),
-            )
+                    .steady_authorities_sets
+                    .get_mut(&steady_wave)
+                    .unwrap()
+                    .insert(certificate.origin());
+            }
+            return leader;
         } else if state
             .fallback_authorities_sets
             .entry(fallback_wave - 1)
             .or_insert_with(HashSet::new)
             .contains(&certificate.origin())
-            && self.check_fallback_commit(certificate, fallback_wave - 1, state)
         {
-            state
-                .steady_authorities_sets
-                .get_mut(&steady_wave)
-                .unwrap()
-                .insert(certificate.origin());
-            Some(
+            let leader = self.check_fallback_commit(certificate, fallback_wave - 1, state);
+            if leader.is_some() {
+                debug!(
+                    "{} is in the steady state in wave {}",
+                    certificate.origin(),
+                    steady_wave
+                );
                 state
-                    .fallback_leader(fallback_wave - 1)
-                    .map(|(_, x)| x.clone())
-                    .unwrap(),
-            )
-        } else {
-            state
-                .fallback_authorities_sets
-                .get_mut(&fallback_wave)
-                .unwrap()
-                .insert(certificate.origin());
-            None
+                    .steady_authorities_sets
+                    .get_mut(&steady_wave)
+                    .unwrap()
+                    .insert(certificate.origin());
+            }
+            return leader;
         }
+        debug!(
+            "{} is in the fallback state in wave {}",
+            certificate.origin(),
+            steady_wave
+        );
+        state
+            .fallback_authorities_sets
+            .get_mut(&fallback_wave)
+            .unwrap()
+            .insert(certificate.origin());
+        None
     }
 
     fn check_steady_commit(
@@ -118,11 +131,11 @@ impl Committer {
         certificate: &Certificate,
         wave: Round,
         state: &VirtualState,
-    ) -> bool {
-        state.steady_leader(wave).map_or_else(
-            || false,
-            |(_, leader)| {
-                state
+    ) -> Option<Certificate> {
+        state
+            .steady_leader(wave)
+            .map(|(_, leader)| {
+                (state
                     .dag
                     .get(&(certificate.virtual_round() - 1))
                     .expect("We should have all the history")
@@ -137,9 +150,10 @@ impl Committer {
                     })
                     .map(|(_, certificate)| self.committee.stake(&certificate.origin()))
                     .sum::<Stake>()
-                    >= self.committee.quorum_threshold()
-            },
-        )
+                    >= self.committee.quorum_threshold())
+                .then(|| leader.clone())
+            })
+            .flatten()
     }
 
     fn check_fallback_commit(
@@ -147,11 +161,11 @@ impl Committer {
         certificate: &Certificate,
         wave: Round,
         state: &VirtualState,
-    ) -> bool {
-        state.fallback_leader(wave).map_or_else(
-            || false,
-            |(_, leader)| {
-                state
+    ) -> Option<Certificate> {
+        state
+            .fallback_leader(wave)
+            .map(|(_, leader)| {
+                (state
                     .dag
                     .get(&(certificate.virtual_round() - 1))
                     .expect("We should have all the history")
@@ -166,9 +180,10 @@ impl Committer {
                     })
                     .map(|(_, certificate)| self.committee.stake(&certificate.origin()))
                     .sum::<Stake>()
-                    >= self.committee.quorum_threshold()
-            },
-        )
+                    >= self.committee.quorum_threshold())
+                .then(|| leader.clone())
+            })
+            .flatten()
     }
 
     /// Checks if there is a path between two leaders.
@@ -191,7 +206,7 @@ impl Committer {
     }
 
     /// Order the past leaders that we didn't already commit.
-    fn commit_leader(
+    fn order_leaders(
         &self,
         leader: &Certificate,
         state: &VirtualState,

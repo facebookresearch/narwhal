@@ -79,13 +79,12 @@ impl Consensus {
         let mut quorum = None;
         let mut advance_early = false;
         loop {
-            let timer_expired = timer.is_elapsed();
-            if (timer_expired || advance_early) && quorum.is_some() {
+            if (timer.is_elapsed() || advance_early) && quorum.is_some() {
                 // Advance to the next round.
                 self.virtual_round = virtual_round + 1;
                 debug!("Virtual dag moved to round {}", self.virtual_round);
 
-                // TODO: Needs to also provide the primary::proposer with the virtual parents.
+                // Send the virtual parents to the primary's proposer.
                 self.tx_parents
                     .send(quorum.unwrap())
                     .await
@@ -143,7 +142,7 @@ impl Consensus {
                         }
                     }
 
-                    // Try to advance to the next round.
+                    // Try to advance to the next (virtual) round.
                     let (parents, authors): (Vec<_>, Vec<_>) = virtual_state
                         .dag
                         .get(&virtual_round)
@@ -176,13 +175,13 @@ impl Consensus {
     }
 
     /// Check if we gathered a quorum of votes for the leader.
-    fn qc(&mut self, round: Round, state: &VirtualState) -> bool {
-        state.steady_leader(round - 1).map_or_else(
+    fn qc(&mut self, virtual_round: Round, virtual_state: &VirtualState) -> bool {
+        virtual_state.steady_leader(virtual_round - 1).map_or_else(
             || false,
             |(leader_digest, _)| {
-                state
+                virtual_state
                     .dag
-                    .get(&round)
+                    .get(&virtual_round)
                     .expect("We just added a certificate with this round")
                     .values()
                     .filter(|(_, x)| x.virtual_parents().contains(&leader_digest))
@@ -194,13 +193,13 @@ impl Consensus {
     }
 
     /// Check if it is impossible to gather a quorum of votes on the leader.
-    fn tc(&mut self, round: Round, state: &VirtualState) -> bool {
-        state.steady_leader(round - 1).map_or_else(
+    fn tc(&mut self, virtual_round: Round, virtual_state: &VirtualState) -> bool {
+        virtual_state.steady_leader(virtual_round - 1).map_or_else(
             || false,
             |(leader_digest, _)| {
-                state
+                virtual_state
                     .dag
-                    .get(&round)
+                    .get(&virtual_round)
                     .expect("We just added a certificate with this round")
                     .values()
                     .filter(|(_, x)| !x.virtual_parents().contains(&leader_digest))
