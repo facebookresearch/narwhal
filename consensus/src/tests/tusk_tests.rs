@@ -1,11 +1,11 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
 use config::{Authority, PrimaryAddresses};
-use crypto::{generate_keypair, SecretKey};
+use crypto::{generate_keypair, Digest, Hash as _, PublicKey, SecretKey};
 use primary::Header;
 use rand::rngs::StdRng;
 use rand::SeedableRng as _;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use tokio::sync::mpsc::channel;
 
 // Fixture
@@ -99,7 +99,7 @@ async fn commit_one() {
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
-    Consensus::spawn(
+    Tusk::spawn(
         mock_committee(),
         /* gc_depth */ 50,
         rx_waiter,
@@ -144,7 +144,7 @@ async fn dead_node() {
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
-    Consensus::spawn(
+    Tusk::spawn(
         mock_committee(),
         /* gc_depth */ 50,
         rx_waiter,
@@ -232,7 +232,7 @@ async fn not_enough_support() {
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
-    Consensus::spawn(
+    Tusk::spawn(
         mock_committee(),
         /* gc_depth */ 50,
         rx_waiter,
@@ -295,7 +295,7 @@ async fn missing_leader() {
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
-    Consensus::spawn(
+    Tusk::spawn(
         mock_committee(),
         /* gc_depth */ 50,
         rx_waiter,

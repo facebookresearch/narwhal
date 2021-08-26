@@ -48,7 +48,7 @@ pub struct Header {
     pub round: Round,
     pub payload: BTreeMap<Digest, WorkerId>,
     pub parents: BTreeSet<Digest>,
-    metadata: Option<Metadata>,
+    pub metadata: Option<Metadata>,
     pub id: Digest,
     pub signature: Signature,
 }
