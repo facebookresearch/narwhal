@@ -1,6 +1,6 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
+use crate::dolphin::virtual_state::VirtualState;
 use crate::state::{Dag, State};
-use crate::virtual_state::VirtualState;
 use config::{Committee, Stake};
 use log::debug;
 use primary::{Certificate, Round};

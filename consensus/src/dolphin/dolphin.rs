@@ -1,7 +1,7 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-use crate::committer::Committer;
+use crate::dolphin::committer::Committer;
+use crate::dolphin::virtual_state::VirtualState;
 use crate::state::State;
-use crate::virtual_state::VirtualState;
 use config::{Committee, Stake};
 use crypto::PublicKey;
 use log::{debug, info, log_enabled, warn};
