@@ -179,6 +179,9 @@ impl Core {
             DagError::HeaderRequiresQuorum(header.id.clone())
         );
 
+        // TODO: Check weak links. If they are to old, don't try to get them but get the payload.
+        // Otherwise get them, get the payload, and try to vote for the header.
+
         // Ensure we have the payload. If we don't, the synchronizer will ask our workers to get it, and then
         // reschedule processing of this header once we have it.
         if self.synchronizer.missing_payload(header).await? {

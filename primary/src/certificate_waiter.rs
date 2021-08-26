@@ -53,7 +53,7 @@ impl CertificateWaiter {
         });
     }
 
-    /// Helper function. It waits for particular data to become available in the storage and then 
+    /// Helper function. It waits for particular data to become available in the storage and then
     /// delivers the specified header.
     async fn waiter(
         mut missing: Vec<(Vec<u8>, Store)>,
@@ -85,7 +85,7 @@ impl CertificateWaiter {
                         continue;
                     }
 
-                    // Add the certificate to the waiter pool. The waiter will return it to us when 
+                    // Add the certificate to the waiter pool. The waiter will return it to us when
                     // all its parents are in the store.
                     let wait_for = certificate
                         .header
@@ -113,13 +113,13 @@ impl CertificateWaiter {
             // Cleanup internal state. Deliver the certificates waiting on garbage collected ancestors.
             let round = self.consensus_round.load(Ordering::Relaxed);
             if round > self.gc_depth {
-                let mut gc_round = round - self.gc_depth;
+                let gc_round = round - self.gc_depth;
                 for (r, handler) in self.pending.values() {
-                    if r <= &gc_round + 1 {
+                    if *r <= gc_round + 1 {
                         let _ = handler.send(()).await;
                     }
                 }
-                self.pending.retain(|_, (r, _)| r > &mut gc_round + 1);
+                self.pending.retain(|_, (r, _)| r > &mut (gc_round + 1));
             }
         }
     }

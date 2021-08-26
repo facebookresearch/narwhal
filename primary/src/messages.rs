@@ -231,7 +231,14 @@ impl Certificate {
 
     #[cfg(feature = "dolphin")]
     pub fn virtual_round(&self) -> Round {
-        self.header.virtual_round
+        // TODO:
+        unimplemented!();
+    }
+
+    #[cfg(feature = "dolphin")]
+    pub fn virtual_parents(&self) -> Vec<&Digest> {
+        // TODO
+        unimplemented!();
     }
 }
 
