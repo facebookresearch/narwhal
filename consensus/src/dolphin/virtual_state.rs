@@ -43,7 +43,7 @@ impl VirtualState {
         let round = certificate.virtual_round();
 
         // Ensure the certificate contains virtual metadata.
-        if round == 0 {
+        if certificate.header.metadata.is_none() {
             return false;
         }
 
@@ -86,11 +86,11 @@ impl VirtualState {
 
     /// Returns the certificate (and the certificate's digest) originated by the steady-state leader
     /// of the specified round (if any).
-    pub fn steady_leader(&self, round: Round) -> Option<&(Digest, Certificate)> {
+    pub fn steady_leader(&self, wave: Round) -> Option<&(Digest, Certificate)> {
         #[cfg(test)]
         let seed = 0;
         #[cfg(not(test))]
-        let seed = (round + 1) / 2;
+        let seed = wave;
 
         // Elect the leader.
         let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
@@ -98,19 +98,23 @@ impl VirtualState {
         let leader = keys[seed as usize % self.committee.size()];
 
         // Return its certificate and the certificate's digest.
+        let round = match wave {
+            0 => 0,
+            _ => wave * 2 - 1,
+        };
         self.dag.get(&round).map(|x| x.get(&leader)).flatten()
     }
 
     /// Returns the certificate (and the certificate's digest) originated by the fallback leader
     /// of the specified round (if any).
-    pub fn fallback_leader(&self, round: Round) -> Option<&(Digest, Certificate)> {
+    pub fn fallback_leader(&self, wave: Round) -> Option<&(Digest, Certificate)> {
         // TODO: We should elect the leader of round r-2 using the common coin revealed at round r.
         // At this stage, we are guaranteed to have 2f+1 certificates from round r (which is enough to
         // compute the coin). We currently just use round-robin.
         #[cfg(test)]
         let coin = 0;
         #[cfg(not(test))]
-        let coin = (round + 1) / 4;
+        let coin = wave;
 
         // Elect the leader.
         let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
@@ -118,6 +122,10 @@ impl VirtualState {
         let leader = keys[coin as usize % self.committee.size()];
 
         // Return its certificate and the certificate's digest.
+        let round = match wave {
+            0 => 0,
+            _ => wave * 2 - 1,
+        };
         self.dag.get(&round).map(|x| x.get(&leader)).flatten()
     }
 }

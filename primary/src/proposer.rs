@@ -5,9 +5,9 @@ use crate::primary::Round;
 use config::{Committee, WorkerId};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
-use log::debug;
 #[cfg(feature = "benchmark")]
 use log::info;
+use log::{debug, log_enabled};
 use std::collections::VecDeque;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
@@ -99,6 +99,18 @@ impl Proposer {
         )
         .await;
         debug!("Created {:?}", header);
+        if log_enabled!(log::Level::Debug) {
+            if let Some(metadata) = header.metadata.as_ref() {
+                debug!(
+                    "{} contains virtual round {}",
+                    header, metadata.virtual_round
+                );
+                debug!(
+                    "{} virtual parents are {:?}",
+                    header, metadata.virtual_parents
+                );
+            }
+        }
 
         #[cfg(feature = "benchmark")]
         for digest in header.payload.keys() {

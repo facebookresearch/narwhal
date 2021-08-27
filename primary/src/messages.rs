@@ -293,11 +293,15 @@ impl fmt::Debug for Certificate {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
-            "{}: C{}({}, {})",
+            "{}: C{}({}, {}, {})",
             self.digest(),
             self.round(),
             self.origin(),
-            self.header.id
+            self.header.id,
+            self.header
+                .metadata
+                .as_ref()
+                .map_or_else(|| 0, |x| x.virtual_round)
         )
     }
 }

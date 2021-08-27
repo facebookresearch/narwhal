@@ -55,6 +55,7 @@ impl Committer {
         certificate: &Certificate,
         state: &mut VirtualState,
     ) -> Option<Certificate> {
+        debug!("Updating validator mode for {}", certificate.origin());
         let steady_wave = (certificate.virtual_round() + 1) / 2;
         let fallback_wave = (certificate.virtual_round() + 1) / 4;
 
@@ -70,6 +71,7 @@ impl Committer {
                 .or_insert_with(HashSet::new)
                 .contains(&certificate.origin())
         {
+            debug!("No validator mode updates for {}", certificate.origin());
             return None;
         }
 
@@ -92,8 +94,8 @@ impl Committer {
                     .get_mut(&steady_wave)
                     .unwrap()
                     .insert(certificate.origin());
+                return leader;
             }
-            return leader;
         } else if state
             .fallback_authorities_sets
             .entry(fallback_wave - 1)
@@ -112,13 +114,13 @@ impl Committer {
                     .get_mut(&steady_wave)
                     .unwrap()
                     .insert(certificate.origin());
+                return leader;
             }
-            return leader;
         }
         debug!(
             "{} is in the fallback state in wave {}",
             certificate.origin(),
-            steady_wave
+            fallback_wave
         );
         state
             .fallback_authorities_sets
@@ -220,7 +222,7 @@ impl Committer {
         for w in (last_committed_wave + 1..steady_wave).rev() {
             let (_, v) = state
                 .dag
-                .get(&(2 * w + 1))
+                .get(&(2 * w - 1))
                 .expect("We should have at least one node")
                 .get(&leader.origin())
                 .expect("Certificates have parents of the same author");

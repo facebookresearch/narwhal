@@ -3,7 +3,7 @@ use crate::dolphin::committer::Committer;
 use crate::dolphin::virtual_state::VirtualState;
 use crate::state::State;
 use config::{Committee, Stake};
-use crypto::PublicKey;
+use crypto::{Hash as _, PublicKey};
 use log::{debug, info, log_enabled, warn};
 use primary::{Certificate, Metadata, Round};
 use std::collections::BTreeSet;
@@ -61,7 +61,7 @@ impl Dolphin {
                 tx_parents,
                 tx_output,
                 genesis: Certificate::genesis(&committee),
-                virtual_round: 1,
+                virtual_round: 0,
                 committer: Committer::new(committee),
             }
             .run()
@@ -77,18 +77,17 @@ impl Dolphin {
         let timer = sleep(Duration::from_millis(self.timeout));
         tokio::pin!(timer);
 
-        let mut virtual_round = self.virtual_round;
-        let mut quorum = None;
-        let mut advance_early = false;
+        let mut quorum = Some(self.genesis.iter().map(|x| (x.digest(), 0)).collect());
+        let mut advance_early = true;
         loop {
             if (timer.is_elapsed() || advance_early) && quorum.is_some() {
                 // Advance to the next round.
-                self.virtual_round = virtual_round + 1;
+                self.virtual_round += 1;
                 debug!("Virtual dag moved to round {}", self.virtual_round);
 
                 // Send the virtual parents to the primary's proposer.
                 self.tx_parents
-                    .send(Metadata::new(virtual_round, quorum.unwrap()))
+                    .send(Metadata::new(self.virtual_round, quorum.unwrap()))
                     .await
                     .expect("Failed to send virtual parents to primary");
 
@@ -103,7 +102,7 @@ impl Dolphin {
             tokio::select! {
                 Some(certificate) = self.rx_certificate.recv() => {
                     debug!("Processing {:?}", certificate);
-                    virtual_round = certificate.virtual_round();
+                    let virtual_round = certificate.virtual_round();
 
                     // Add the new certificate to the local storage.
                     state.add(certificate.clone());
@@ -114,15 +113,15 @@ impl Dolphin {
                     }
                     debug!("Adding virtual {:?}", certificate);
 
+                    // Try to commit.
+                    let sequence = self.committer.try_commit(&certificate, &mut state, &mut virtual_state);
+
                     // Log the latest committed round of every authority (for debug).
                     if log_enabled!(log::Level::Debug) {
                         for (name, round) in &state.last_committed {
                             debug!("Latest commit of {}: Round {}", name, round);
                         }
                     }
-
-                    // Try to commit.
-                    let sequence = self.committer.try_commit(&certificate, &mut state, &mut virtual_state);
 
                     // Output the sequence in the right order.
                     for certificate in sequence {
@@ -145,13 +144,18 @@ impl Dolphin {
                         }
                     }
 
+                    // If the certificate is not from our virtual round, it cannot help us advance round.
+                    if self.virtual_round != virtual_round {
+                        continue;
+                    }
+
                     // Try to advance to the next (virtual) round.
                     let (parents, authors): (BTreeSet<_>, Vec<_>) = virtual_state
                         .dag
                         .get(&virtual_round)
                         .expect("We just added a certificate with this round")
                         .values()
-                        .map(|(digest, x)| ((digest.clone(), x.round()), x.origin()))
+                        .map(|(digest, x)| ((digest.clone(), x.virtual_round()), x.origin()))
                         .collect::<Vec<_>>()
                         .iter()
                         .cloned()
