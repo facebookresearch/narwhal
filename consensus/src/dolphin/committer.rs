@@ -29,9 +29,10 @@ impl Committer {
         if let Some(leader) = self.update_validator_mode(&certificate, virtual_state) {
             // Get an ordered list of past leaders that are linked to the current leader.
             let last_committed_wave = (state.last_committed_round + 1) / 2;
-            while let Some(leader) = self
+            for leader in self
                 .order_leaders(&leader, &virtual_state, last_committed_wave)
-                .pop()
+                .iter()
+                .rev()
             {
                 // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
                 for x in state.flatten(&leader) {
@@ -145,13 +146,13 @@ impl Committer {
                     .get(&(certificate.virtual_round() - 1))
                     .expect("We should have all the history")
                     .values()
-                    .filter(|(digest, certificate)| {
+                    .filter(|(digest, parent)| {
                         certificate.virtual_parents().contains(&digest)
                             && state
                                 .steady_authorities_sets
                                 .get(&wave)
-                                .map_or_else(|| false, |x| x.contains(&certificate.origin()))
-                            && self.strong_path(leader, certificate, &state.dag)
+                                .map_or_else(|| false, |x| x.contains(&parent.origin()))
+                            && self.strong_path(parent, leader, &state.dag)
                     })
                     .map(|(_, certificate)| self.committee.stake(&certificate.origin()))
                     .sum::<Stake>()
@@ -175,13 +176,13 @@ impl Committer {
                     .get(&(certificate.virtual_round() - 1))
                     .expect("We should have all the history")
                     .values()
-                    .filter(|(digest, certificate)| {
+                    .filter(|(digest, parent)| {
                         certificate.virtual_parents().contains(&digest)
                             && state
                                 .fallback_authorities_sets
                                 .get(&wave)
-                                .map_or_else(|| false, |x| x.contains(&certificate.origin()))
-                            && self.strong_path(leader, certificate, &state.dag)
+                                .map_or_else(|| false, |x| x.contains(&parent.origin()))
+                            && self.strong_path(parent, leader, &state.dag)
                     })
                     .map(|(_, certificate)| self.committee.stake(&certificate.origin()))
                     .sum::<Stake>()

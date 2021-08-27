@@ -183,7 +183,8 @@ impl Dolphin {
 
     /// Check if we gathered a quorum of votes for the leader.
     fn qc(&mut self, virtual_round: Round, virtual_state: &VirtualState) -> bool {
-        virtual_state.steady_leader(virtual_round - 1).map_or_else(
+        let wave = (virtual_round + 1) / 2;
+        virtual_state.steady_leader(wave - 1).map_or_else(
             || false,
             |(leader_digest, _)| {
                 virtual_state
@@ -201,7 +202,8 @@ impl Dolphin {
 
     /// Check if it is impossible to gather a quorum of votes on the leader.
     fn tc(&mut self, virtual_round: Round, virtual_state: &VirtualState) -> bool {
-        virtual_state.steady_leader(virtual_round - 1).map_or_else(
+        let wave = (virtual_round + 1) / 2;
+        virtual_state.steady_leader(wave - 1).map_or_else(
             || false,
             |(leader_digest, _)| {
                 virtual_state
