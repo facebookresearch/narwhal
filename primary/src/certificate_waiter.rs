@@ -29,6 +29,8 @@ pub struct CertificateWaiter {
     /// List of digests (certificates) that are waiting to be processed. Their processing will
     /// resume when we get all their dependencies.
     pending: HashMap<Digest, (Round, Sender<()>)>,
+    /// The last garbage collected round.
+    gc_round: Round,
 }
 
 impl CertificateWaiter {
@@ -47,6 +49,7 @@ impl CertificateWaiter {
                 rx_synchronizer,
                 tx_core,
                 pending: HashMap::new(),
+                gc_round: 0,
             }
             .run()
             .await
@@ -87,13 +90,29 @@ impl CertificateWaiter {
 
                     // Add the certificate to the waiter pool. The waiter will return it to us when
                     // all its parents are in the store.
-                    let wait_for = certificate
+                    let mut wait_for: Vec<_> = certificate
                         .header
                         .parents
                         .iter()
                         .cloned()
                         .map(|x| (x.to_vec(), self.store.clone()))
                         .collect();
+                    if let Some(metadata) = certificate.header.metadata.as_ref() {
+
+                        // TODO: This is a problem. If we wait for a certificate, then advance our gc_round,
+                        // it may happen that this certificate never returns if one of the weak links becomes
+                        // older than GC. As a hack, we disable the round certificate check in the core and
+                        // accept outdated certificates.
+
+                        wait_for.extend(
+                            metadata
+                                .virtual_parents
+                                .iter()
+                                .filter(|(_, r)| r > &self.gc_round)
+                                .map(|(x, _)| (x.to_vec(), self.store.clone()))
+                                .collect::<Vec<_>>()
+                        )
+                    }
                     let (tx_cancel, rx_cancel) = channel(1);
                     self.pending.insert(header_id, (certificate.round(), tx_cancel));
                     let fut = Self::waiter(wait_for, certificate, rx_cancel);
@@ -113,12 +132,13 @@ impl CertificateWaiter {
             // Cleanup internal state. Deliver the certificates waiting on garbage collected ancestors.
             let round = self.consensus_round.load(Ordering::Relaxed);
             if round > self.gc_depth {
-                let gc_round = round - self.gc_depth;
+                self.gc_round = round - self.gc_depth;
                 for (r, handler) in self.pending.values() {
-                    if *r <= gc_round + 1 {
+                    if *r <= self.gc_round + 1 {
                         let _ = handler.send(()).await;
                     }
                 }
+                let gc_round = self.gc_round;
                 self.pending.retain(|_, (r, _)| r > &mut (gc_round + 1));
             }
         }

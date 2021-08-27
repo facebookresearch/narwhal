@@ -179,8 +179,19 @@ impl Core {
             DagError::HeaderRequiresQuorum(header.id.clone())
         );
 
-        // TODO: Check weak links. If they are to old, don't try to get them but get the payload.
-        // Otherwise get them, get the payload, and try to vote for the header.
+        // Check weak links. If they are too old, we don't try to synchronize them but we still need to
+        // get the payload.
+        if !self
+            .synchronizer
+            .get_weak_links(&header, &self.gc_round)
+            .await?
+        {
+            debug!(
+                "Processing of {} suspended: missing weak-link(s)",
+                header.id
+            );
+            return Ok(());
+        }
 
         // Ensure we have the payload. If we don't, the synchronizer will ask our workers to get it, and then
         // reschedule processing of this header once we have it.
@@ -346,10 +357,12 @@ impl Core {
     }
 
     fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
-        ensure!(
-            self.gc_round < certificate.round(),
-            DagError::TooOld(certificate.digest(), certificate.round())
-        );
+        // TODO: Disabling this check is a hack. See TODO in certificate_waiter.
+
+        //ensure!(
+        //    self.gc_round < certificate.round(),
+        //    DagError::TooOld(certificate.digest(), certificate.round())
+        //);
 
         // Verify the certificate (and the embedded header).
         certificate.verify(&self.committee).map_err(DagError::from)

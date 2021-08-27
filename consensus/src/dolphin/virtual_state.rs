@@ -90,7 +90,7 @@ impl VirtualState {
         #[cfg(test)]
         let seed = 0;
         #[cfg(not(test))]
-        let seed = round;
+        let seed = (round + 1) / 2;
 
         // Elect the leader.
         let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
@@ -110,7 +110,7 @@ impl VirtualState {
         #[cfg(test)]
         let coin = 0;
         #[cfg(not(test))]
-        let coin = round + 1;
+        let coin = (round + 1) / 4;
 
         // Elect the leader.
         let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();

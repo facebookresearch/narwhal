@@ -22,6 +22,7 @@ def local(ctx, debug=True):
         'protocol': 'dolphin'
     }
     node_params = {
+        'timeout': 5_000,  # ms
         'header_size': 1_000,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
@@ -103,8 +104,10 @@ def remote(ctx, debug=False):
         'tx_size': 512,
         'duration': 300,
         'runs': 2,
+        'protocol': 'dolphin'
     }
     node_params = {
+        'timeout': 5_000,  # ms
         'header_size': 1_000,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds

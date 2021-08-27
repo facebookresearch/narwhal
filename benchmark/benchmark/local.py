@@ -52,8 +52,10 @@ class LocalBench:
             sleep(0.5)  # Removing the store may take time.
 
             # Recompile the latest code.
-            cmd = CommandMaker.compile(self.protocol).split()
-            subprocess.run(cmd, check=True, cwd=PathMaker.node_crate_path())
+            cmd = CommandMaker.compile(self.protocol)
+            subprocess.run(
+                [cmd], shell=True, check=True, cwd=PathMaker.node_crate_path()
+            )
 
             # Create alias for the client and nodes binary.
             cmd = CommandMaker.alias_binaries(PathMaker.binary_path())

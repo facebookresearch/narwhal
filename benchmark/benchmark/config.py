@@ -172,6 +172,9 @@ class NodeParameters:
             inputs += [json['sync_retry_nodes']]
             inputs += [json['batch_size']]
             inputs += [json['max_batch_delay']]
+            if 'timeout' in json:
+                inputs += [json['timeout']]
+
         except KeyError as e:
             raise ConfigError(f'Malformed parameters: missing key {e}')
 
@@ -221,7 +224,8 @@ class BenchParameters:
             elif json['protocol'] == 'tusk' or json['protocol'] == 'dolphin':
                 self.protocol = json['protocol']
             else:
-                raise ConfigError('Unsupported protocol')
+                protocol = json['protocol']
+                raise ConfigError(f'Unsupported protocol "{protocol}"')
 
         except KeyError as e:
             raise ConfigError(f'Malformed bench parameters: missing key {e}')

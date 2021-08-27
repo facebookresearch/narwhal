@@ -112,6 +112,7 @@ impl Dolphin {
                     if !virtual_state.try_add(&certificate) {
                         continue;
                     }
+                    debug!("Adding virtual {:?}", certificate);
 
                     // Log the latest committed round of every authority (for debug).
                     if log_enabled!(log::Level::Debug) {
