@@ -62,7 +62,7 @@ impl Dolphin {
                 tx_output,
                 genesis: Certificate::genesis(&committee),
                 virtual_round: 0,
-                committer: Committer::new(committee),
+                committer: Committer::new(committee, gc_depth),
             }
             .run()
             .await;
@@ -109,6 +109,16 @@ impl Dolphin {
 
                     // Try adding the certificate to the virtual dag.
                     if !virtual_state.try_add(&certificate) {
+
+                        /*
+                        debug!("HERE: METADATA: {}", certificate.header.metadata.is_some());
+                        if let Some(z) = certificate.header.metadata.as_ref() {
+                            debug!("HERE: {}", z.virtual_round);
+                            debug!("HERE: {:?}", z.virtual_parents);
+                        }
+                        */
+
+
                         continue;
                     }
                     debug!("Adding virtual {:?}", certificate);

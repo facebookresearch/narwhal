@@ -2,18 +2,23 @@
 use crate::dolphin::virtual_state::VirtualState;
 use crate::state::{Dag, State};
 use config::{Committee, Stake};
-use log::debug;
+use log::{debug, log_enabled};
 use primary::{Certificate, Round};
 use std::collections::HashSet;
 
 pub struct Committer {
     /// The committee information.
     committee: Committee,
+    /// The depth of the garbage collection.
+    gc_depth: Round,
 }
 
 impl Committer {
-    pub fn new(committee: Committee) -> Self {
-        Self { committee }
+    pub fn new(committee: Committee, gc_depth: Round) -> Self {
+        Self {
+            committee,
+            gc_depth,
+        }
     }
 
     /// Try to commit. If we succeed, output am ordered sequence.
@@ -26,11 +31,11 @@ impl Committer {
         let mut sequence = Vec::new();
 
         // Update the leader mode to decide whether we can commit the leader.
-        if let Some(leader) = self.update_validator_mode(&certificate, virtual_state) {
+        if let Some(last_leader) = self.update_validator_mode(&certificate, virtual_state) {
             // Get an ordered list of past leaders that are linked to the current leader.
-            let last_committed_wave = (state.last_committed_round + 1) / 2;
+            let last_committed_wave = (last_leader.virtual_round() + 1) / 2;
             for leader in self
-                .order_leaders(&leader, &virtual_state, last_committed_wave)
+                .order_leaders(&last_leader, &virtual_state, last_committed_wave)
                 .iter()
                 .rev()
             {
@@ -44,7 +49,7 @@ impl Committer {
             }
 
             // Cleanup the virtual dag.
-            virtual_state.cleanup(&state.last_committed_round);
+            virtual_state.cleanup(last_leader.virtual_round(), self.gc_depth);
         }
         sequence
     }
@@ -60,6 +65,26 @@ impl Committer {
         let steady_wave = (certificate.virtual_round() + 1) / 2;
         let fallback_wave = (certificate.virtual_round() + 1) / 4;
 
+        if log_enabled!(log::Level::Debug) {
+            if let Some(nodes) = state.steady_authorities_sets.get(&steady_wave) {
+                for node in nodes {
+                    debug!(
+                        "Status of {} for round {}: steady",
+                        node,
+                        certificate.virtual_round()
+                    );
+                }
+            }
+            if let Some(nodes) = state.fallback_authorities_sets.get(&fallback_wave) {
+                for node in nodes {
+                    debug!(
+                        "Status of {} for round {}: fallback",
+                        node,
+                        certificate.virtual_round()
+                    );
+                }
+            }
+        }
         // If we already updated the validator mode for this wave, there is nothing else to do.
         if state
             .steady_authorities_sets
@@ -77,6 +102,12 @@ impl Committer {
         }
 
         // Check whether the author of the certificate is in the steady state for this round.
+        debug!("HERE 1: {}", state.steady_authorities_sets.len());
+        debug!("HERE 2: prev wave {}", steady_wave - 1);
+        debug!(
+            "HERE 3: {:?}",
+            state.steady_authorities_sets.get(&(steady_wave - 1))
+        );
         if state
             .steady_authorities_sets
             .entry(steady_wave - 1)
@@ -98,6 +129,7 @@ impl Committer {
                 return leader;
             }
         }
+        debug!("HERE 10");
         if state
             .fallback_authorities_sets
             .entry(fallback_wave - 1)
@@ -138,6 +170,7 @@ impl Committer {
         wave: Round,
         state: &VirtualState,
     ) -> Option<Certificate> {
+        debug!("Checking steady commit");
         state
             .steady_leader(wave)
             .map(|(_, leader)| {
@@ -147,12 +180,16 @@ impl Committer {
                     .expect("We should have all the history")
                     .values()
                     .filter(|(digest, parent)| {
-                        certificate.virtual_parents().contains(&digest)
-                            && state
-                                .steady_authorities_sets
-                                .get(&wave)
-                                .map_or_else(|| false, |x| x.contains(&parent.origin()))
-                            && self.strong_path(parent, leader, &state.dag)
+                        let is_parent = certificate.virtual_parents().contains(&digest);
+                        debug!("{} is a parent of {:?}: {}", digest, certificate, is_parent);
+                        let is_steady = state
+                            .steady_authorities_sets
+                            .get(&wave)
+                            .map_or_else(|| false, |x| x.contains(&parent.origin()));
+                        debug!("Parent {:?} in steady state: {}", parent, is_steady);
+                        let linked = self.strong_path(parent, leader, &state.dag);
+                        debug!("Link between {:?} <- {:?}: {}", leader, parent, linked);
+                        is_parent && is_steady && linked
                     })
                     .map(|(_, certificate)| self.committee.stake(&certificate.origin()))
                     .sum::<Stake>()
@@ -168,6 +205,7 @@ impl Committer {
         wave: Round,
         state: &VirtualState,
     ) -> Option<Certificate> {
+        debug!("Checking fallback commit");
         state
             .fallback_leader(wave)
             .map(|(_, leader)| {
