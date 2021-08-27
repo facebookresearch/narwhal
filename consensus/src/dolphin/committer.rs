@@ -96,7 +96,8 @@ impl Committer {
                     .insert(certificate.origin());
                 return leader;
             }
-        } else if state
+        }
+        if state
             .fallback_authorities_sets
             .entry(fallback_wave - 1)
             .or_insert_with(HashSet::new)
