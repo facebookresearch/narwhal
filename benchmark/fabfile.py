@@ -93,17 +93,17 @@ def install(ctx):
 
 
 @task
-def remote(ctx, debug=True):
+def remote(ctx, debug=False):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [4],
+        'nodes': [10],
         'workers': 1,
         'collocate': True,
-        'rate': [10_000],
+        'rate': [50_000],
         'tx_size': 512,
-        'duration': 60,
-        'runs': 1,
+        'duration': 300,
+        'runs': 2,
         'protocol': 'dolphin'
     }
     node_params = {
