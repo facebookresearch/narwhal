@@ -78,7 +78,7 @@ impl CertificatesAggregator {
 
         self.certificates.push(certificate.digest());
         self.weight += committee.stake(&origin);
-        if self.weight >= committee.quorum_threshold() && self.used.contains(&self.name) {
+        if self.weight >= committee.quorum_threshold() {
             self.weight = 0; // Ensures quorum is only reached once.
             return Some(self.certificates.drain(..).collect());
         }

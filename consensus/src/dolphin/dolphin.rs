@@ -169,7 +169,7 @@ impl Dolphin {
                         .cloned()
                         .unzip();
 
-                    if authors.iter().any(|x| x == &self.name) {
+                    //if authors.iter().any(|x| x == &self.name) {
                         quorum = (authors
                             .iter()
                             .map(|x| self.committee.stake(x))
@@ -182,7 +182,7 @@ impl Dolphin {
                             _ => virtual_state.steady_leader((virtual_round+1)/2).is_some(),
                         };
                         debug!("Can early advance for round {}: {}", self.virtual_round, advance_early);
-                    }
+                    //}
                 },
                 () = &mut timer => {
                     // Nothing to do.
