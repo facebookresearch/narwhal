@@ -61,24 +61,33 @@ impl Committer {
         certificate: &Certificate,
         state: &mut VirtualState,
     ) -> Option<Certificate> {
-        debug!("Updating validator mode for {}", certificate.origin());
         let steady_wave = (certificate.virtual_round() + 1) / 2;
         let fallback_wave = (certificate.virtual_round() + 1) / 4;
 
         if log_enabled!(log::Level::Debug) {
-            for r in certificate.virtual_round() - 1..=certificate.virtual_round() {
-                if let Some(nodes) = state.steady_authorities_sets.get(&steady_wave) {
-                    for node in nodes {
-                        debug!("Status of {} for round {}: steady", node, r);
-                    }
+            if let Some(nodes) = state.steady_authorities_sets.get(&steady_wave) {
+                for node in nodes {
+                    debug!("{} in steady wave {} (latest)", node, steady_wave);
                 }
-                if let Some(nodes) = state.fallback_authorities_sets.get(&fallback_wave) {
-                    for node in nodes {
-                        debug!("Status of {} for round {}: fallback", node, r);
-                    }
+            }
+            if let Some(nodes) = state.fallback_authorities_sets.get(&fallback_wave) {
+                for node in nodes {
+                    debug!("{} in fallback wave {} (latest)", node, fallback_wave);
+                }
+            }
+            if let Some(nodes) = state.steady_authorities_sets.get(&(steady_wave - 1)) {
+                for node in nodes {
+                    debug!("{} in steady wave {}", node, steady_wave - 1);
+                }
+            }
+            if let Some(nodes) = state.fallback_authorities_sets.get(&(fallback_wave - 1)) {
+                for node in nodes {
+                    debug!("{} in fallback wave {} ", node, fallback_wave - 1);
                 }
             }
         }
+        debug!("Updating validator mode for {}", certificate.origin());
+
         // If we already updated the validator mode for this wave, there is nothing else to do.
         if state
             .steady_authorities_sets

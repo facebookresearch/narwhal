@@ -84,7 +84,7 @@ impl Dolphin {
                 if timer.is_elapsed() {
                     warn!("Timing out, moving to the next round");
                 }
-                
+
                 // Advance to the next round.
                 self.virtual_round += 1;
                 debug!("Virtual dag moved to round {}", self.virtual_round);
