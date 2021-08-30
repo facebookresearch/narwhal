@@ -2,6 +2,7 @@
 use crate::state::Dag;
 use config::Committee;
 use crypto::{Digest, Hash as _, PublicKey};
+use log::debug;
 use primary::{Certificate, Round};
 use std::collections::{HashMap, HashSet};
 
@@ -126,5 +127,40 @@ impl VirtualState {
             _ => wave * 2 - 1,
         };
         self.dag.get(&round).map(|x| x.get(&leader)).flatten()
+    }
+
+    /// Print the mode and latest waves of each authority.
+    pub fn print_status(&self, certificate: &Certificate) {
+        let mut seen = HashSet::new();
+        let steady_wave = (certificate.virtual_round() + 1) / 2;
+        for w in (steady_wave..=1).rev() {
+            if let Some(nodes) = self.steady_authorities_sets.get(&w) {
+                for node in nodes {
+                    if !seen.contains(&node) {
+                        debug!("{} latest steady wave: {}", node, w);
+                        seen.insert(node);
+                    }
+                }
+            }
+            if seen.len() == self.committee.size() {
+                break;
+            }
+        }
+
+        let mut seen = HashSet::new();
+        let fallback_wave = (certificate.virtual_round() + 1) / 4;
+        for w in (fallback_wave..=1).rev() {
+            if let Some(nodes) = self.fallback_authorities_sets.get(&w) {
+                for node in nodes {
+                    if !seen.contains(&node) {
+                        debug!("{} latest fallback wave: {}", node, w);
+                        seen.insert(node);
+                    }
+                }
+            }
+            if seen.len() == self.committee.size() {
+                break;
+            }
+        }
     }
 }
