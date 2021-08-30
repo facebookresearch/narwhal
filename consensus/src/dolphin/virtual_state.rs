@@ -145,6 +145,7 @@ impl VirtualState {
             }
             if seen.len() == self.committee.size() {
                 break;
+                debug!("BREAKING");
             }
         }
 
