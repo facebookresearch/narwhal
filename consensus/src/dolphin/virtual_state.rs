@@ -137,7 +137,7 @@ impl VirtualState {
             if let Some(nodes) = self.steady_authorities_sets.get(&w) {
                 for node in nodes {
                     if !seen.insert(node) {
-                        debug!("{} latest steady wave: {}", node, w);
+                        debug!("Latest steady wave of {}: {}", node, w);
                     }
                 }
             }
@@ -152,7 +152,7 @@ impl VirtualState {
             if let Some(nodes) = self.fallback_authorities_sets.get(&w) {
                 for node in nodes {
                     if !seen.contains(&node) {
-                        debug!("{} latest fallback wave: {}", node, w);
+                        debug!("Latest fallback wave of {}: {}", node, w);
                         seen.insert(node);
                     }
                 }
