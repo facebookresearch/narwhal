@@ -81,6 +81,10 @@ impl Dolphin {
         let mut advance_early = true;
         loop {
             if (timer.is_elapsed() || advance_early) && quorum.is_some() {
+                if timer.is_elapsed() {
+                    warn!("Timing out, moving to the next round");
+                }
+                
                 // Advance to the next round.
                 self.virtual_round += 1;
                 debug!("Virtual dag moved to round {}", self.virtual_round);
@@ -175,7 +179,7 @@ impl Dolphin {
                     }
                 },
                 () = &mut timer => {
-                    warn!("Timing out, moving to the next round");
+                    // Nothing to do.
                 }
             }
         }
