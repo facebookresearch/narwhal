@@ -179,7 +179,9 @@ impl Dolphin {
 
                         advance_early = match virtual_round % 2 {
                             0 => self.qc(virtual_round, &virtual_state) || self.tc(virtual_round, &virtual_state),
-                            _ => virtual_state.steady_leader(virtual_round).is_some(),
+                            _ =>
+                                virtual_state.steady_leader((virtual_round+1)/2).is_some()
+                            ,
                         };
                         debug!("Can early advance for round {}: {}", self.virtual_round, advance_early);
                     }
