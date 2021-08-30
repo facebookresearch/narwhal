@@ -66,22 +66,16 @@ impl Committer {
         let fallback_wave = (certificate.virtual_round() + 1) / 4;
 
         if log_enabled!(log::Level::Debug) {
-            if let Some(nodes) = state.steady_authorities_sets.get(&steady_wave) {
-                for node in nodes {
-                    debug!(
-                        "Status of {} for round {}: steady",
-                        node,
-                        certificate.virtual_round()
-                    );
+            for r in certificate.virtual_round() - 1..=certificate.virtual_round() {
+                if let Some(nodes) = state.steady_authorities_sets.get(&steady_wave) {
+                    for node in nodes {
+                        debug!("Status of {} for round {}: steady", node, r);
+                    }
                 }
-            }
-            if let Some(nodes) = state.fallback_authorities_sets.get(&fallback_wave) {
-                for node in nodes {
-                    debug!(
-                        "Status of {} for round {}: fallback",
-                        node,
-                        certificate.virtual_round()
-                    );
+                if let Some(nodes) = state.fallback_authorities_sets.get(&fallback_wave) {
+                    for node in nodes {
+                        debug!("Status of {} for round {}: fallback", node, r);
+                    }
                 }
             }
         }
@@ -102,12 +96,6 @@ impl Committer {
         }
 
         // Check whether the author of the certificate is in the steady state for this round.
-        debug!("HERE 1: {}", state.steady_authorities_sets.len());
-        debug!("HERE 2: prev wave {}", steady_wave - 1);
-        debug!(
-            "HERE 3: {:?}",
-            state.steady_authorities_sets.get(&(steady_wave - 1))
-        );
         if state
             .steady_authorities_sets
             .entry(steady_wave - 1)
@@ -129,7 +117,6 @@ impl Committer {
                 return leader;
             }
         }
-        debug!("HERE 10");
         if state
             .fallback_authorities_sets
             .entry(fallback_wave - 1)
@@ -187,9 +174,9 @@ impl Committer {
                             .get(&wave)
                             .map_or_else(|| false, |x| x.contains(&parent.origin()));
                         debug!("Parent {:?} in steady state: {}", parent, is_steady);
-                        let linked = self.strong_path(parent, leader, &state.dag);
-                        debug!("Link between {:?} <- {:?}: {}", leader, parent, linked);
-                        is_parent && is_steady && linked
+                        let is_linked = self.strong_path(parent, leader, &state.dag);
+                        debug!("Link between {:?} <- {:?}: {}", leader, parent, is_linked);
+                        is_parent && is_steady && is_linked
                     })
                     .map(|(_, certificate)| self.committee.stake(&certificate.origin()))
                     .sum::<Stake>()
@@ -215,12 +202,16 @@ impl Committer {
                     .expect("We should have all the history")
                     .values()
                     .filter(|(digest, parent)| {
-                        certificate.virtual_parents().contains(&digest)
-                            && state
-                                .fallback_authorities_sets
-                                .get(&wave)
-                                .map_or_else(|| false, |x| x.contains(&parent.origin()))
-                            && self.strong_path(parent, leader, &state.dag)
+                        let is_parent = certificate.virtual_parents().contains(&digest);
+                        debug!("{} is a parent of {:?}: {}", digest, certificate, is_parent);
+                        let is_fallback = state
+                            .fallback_authorities_sets
+                            .get(&wave)
+                            .map_or_else(|| false, |x| x.contains(&parent.origin()));
+                        debug!("Parent {:?} in fallback state: {}", parent, is_fallback);
+                        let is_linked = self.strong_path(parent, leader, &state.dag);
+                        debug!("Link between {:?} <- {:?}: {}", leader, parent, is_linked);
+                        is_parent && is_fallback && is_linked
                     })
                     .map(|(_, certificate)| self.committee.stake(&certificate.origin()))
                     .sum::<Stake>()

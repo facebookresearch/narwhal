@@ -109,16 +109,6 @@ impl Dolphin {
 
                     // Try adding the certificate to the virtual dag.
                     if !virtual_state.try_add(&certificate) {
-
-                        /*
-                        debug!("HERE: METADATA: {}", certificate.header.metadata.is_some());
-                        if let Some(z) = certificate.header.metadata.as_ref() {
-                            debug!("HERE: {}", z.virtual_round);
-                            debug!("HERE: {:?}", z.virtual_parents);
-                        }
-                        */
-
-
                         continue;
                     }
                     debug!("Adding virtual {:?}", certificate);
@@ -185,7 +175,7 @@ impl Dolphin {
                     }
                 },
                 () = &mut timer => {
-                    // Nothing to do.
+                    warn!("Timing out, moving to the next round");
                 }
             }
         }
