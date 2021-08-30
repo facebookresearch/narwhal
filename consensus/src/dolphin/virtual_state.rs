@@ -133,12 +133,11 @@ impl VirtualState {
     pub fn print_status(&self, certificate: &Certificate) {
         let mut seen = HashSet::new();
         let steady_wave = (certificate.virtual_round() + 1) / 2;
-        for w in (steady_wave..=1).rev() {
+        for w in (1..=steady_wave).rev() {
             if let Some(nodes) = self.steady_authorities_sets.get(&w) {
                 for node in nodes {
-                    if !seen.contains(&node) {
+                    if !seen.insert(node) {
                         debug!("{} latest steady wave: {}", node, w);
-                        seen.insert(node);
                     }
                 }
             }
@@ -147,9 +146,9 @@ impl VirtualState {
             }
         }
 
-        let mut seen = HashSet::new();
+        seen.clear();
         let fallback_wave = (certificate.virtual_round() + 1) / 4;
-        for w in (fallback_wave..=1).rev() {
+        for w in (1..=fallback_wave).rev() {
             if let Some(nodes) = self.fallback_authorities_sets.get(&w) {
                 for node in nodes {
                     if !seen.contains(&node) {

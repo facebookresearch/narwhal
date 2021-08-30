@@ -102,7 +102,7 @@ def remote(ctx, debug=True):
         'collocate': True,
         'rate': [10_000],
         'tx_size': 512,
-        'duration': 300,
+        'duration': 60,
         'runs': 1,
         'protocol': 'dolphin'
     }
