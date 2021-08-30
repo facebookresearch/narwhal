@@ -164,7 +164,7 @@ impl Connection {
                             // Wait an increasing delay before attempting to reconnect.
                             () = &mut timer => {
                                 delay = min(2*delay, 60_000);
-                                retry +=1;
+                                retry += 1;
                                 break 'waiter;
                             },
 

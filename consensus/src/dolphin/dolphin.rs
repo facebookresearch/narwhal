@@ -82,7 +82,10 @@ impl Dolphin {
         loop {
             if (timer.is_elapsed() || advance_early) && quorum.is_some() {
                 if timer.is_elapsed() {
-                    warn!("Timing out, moving to the next round");
+                    warn!(
+                        "Timing out for round {}, moving to the next round",
+                        self.virtual_round
+                    );
                 }
 
                 // Advance to the next round.
@@ -152,6 +155,7 @@ impl Dolphin {
                     if self.virtual_round != virtual_round {
                         continue;
                     }
+                    debug!("Trying to advance round");
 
                     // Try to advance to the next (virtual) round.
                     let (parents, authors): (BTreeSet<_>, Vec<_>) = virtual_state
@@ -171,11 +175,13 @@ impl Dolphin {
                             .map(|x| self.committee.stake(x))
                             .sum::<Stake>() >= self.committee.quorum_threshold())
                             .then(|| parents);
+                        debug!("Got quorum for round {}: {}", self.virtual_round, quorum.is_some());
 
                         advance_early = match virtual_round % 2 {
                             0 => self.qc(virtual_round, &virtual_state) || self.tc(virtual_round, &virtual_state),
                             _ => virtual_state.steady_leader(virtual_round).is_some(),
                         };
+                        debug!("Can early advance for round {}: {}", self.virtual_round, advance_early);
                     }
                 },
                 () = &mut timer => {

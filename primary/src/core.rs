@@ -300,10 +300,11 @@ impl Core {
         self.store.write(certificate.digest().to_vec(), bytes).await;
 
         // Check if we have enough certificates to enter a new dag round and propose a header.
+        let name = self.name;
         if let Some(parents) = self
             .certificates_aggregators
             .entry(certificate.round())
-            .or_insert_with(|| Box::new(CertificatesAggregator::new()))
+            .or_insert_with(|| Box::new(CertificatesAggregator::new(name)))
             .append(certificate.clone(), &self.committee)
         {
             // Send it to the `Proposer`.

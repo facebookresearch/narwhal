@@ -88,6 +88,16 @@ impl Proposer {
     }
 
     async fn make_header(&mut self) {
+        /*
+        // Get the metadata. We include the same metadata until we receive new ones from consensus.
+        let metadata = self.metadata.pop_back();
+        if self.metadata.is_empty() {
+            if let Some(x) = metadata.as_ref() {
+                self.metadata.push_back(x.clone());
+            }
+        }
+        */
+
         // Make a new header.
         let header = Header::new(
             self.name,

@@ -48,14 +48,16 @@ impl VotesAggregator {
 
 /// Aggregate certificates and check if we reach a quorum.
 pub struct CertificatesAggregator {
+    name: PublicKey,
     weight: Stake,
     certificates: Vec<Digest>,
     used: HashSet<PublicKey>,
 }
 
 impl CertificatesAggregator {
-    pub fn new() -> Self {
+    pub fn new(name: PublicKey) -> Self {
         Self {
+            name,
             weight: 0,
             certificates: Vec::new(),
             used: HashSet::new(),
@@ -76,7 +78,7 @@ impl CertificatesAggregator {
 
         self.certificates.push(certificate.digest());
         self.weight += committee.stake(&origin);
-        if self.weight >= committee.quorum_threshold() {
+        if self.weight >= committee.quorum_threshold() && self.used.contains(&self.name) {
             self.weight = 0; // Ensures quorum is only reached once.
             return Some(self.certificates.drain(..).collect());
         }
