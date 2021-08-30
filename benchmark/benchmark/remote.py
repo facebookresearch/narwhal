@@ -166,8 +166,10 @@ class Bench:
         subprocess.run([cmd], shell=True, stderr=subprocess.DEVNULL)
 
         # Recompile the latest code.
-        cmd = CommandMaker.compile().split()
-        subprocess.run(cmd, check=True, cwd=PathMaker.node_crate_path())
+        cmd = CommandMaker.compile()
+        subprocess.run(
+            [cmd], check=True, shell=True, cwd=PathMaker.node_crate_path()
+        )
 
         # Create alias for the client and nodes binary.
         cmd = CommandMaker.alias_binaries(PathMaker.binary_path())
