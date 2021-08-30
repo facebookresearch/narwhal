@@ -138,15 +138,13 @@ impl VirtualState {
             debug!("HERE w= {}", w);
             if let Some(nodes) = self.steady_authorities_sets.get(&w) {
                 for node in nodes {
-                    if !seen.insert(node) {
+                    if seen.insert(node) {
                         debug!("Latest steady wave of {}: {}", node, w);
                     }
                 }
             }
             if seen.len() == self.committee.size() {
-                debug!("BREAKING, {} = {}", seen.len(), self.committee.size());
                 break;
-                
             }
         }
 
@@ -155,9 +153,8 @@ impl VirtualState {
         for w in (1..=fallback_wave).rev() {
             if let Some(nodes) = self.fallback_authorities_sets.get(&w) {
                 for node in nodes {
-                    if !seen.contains(&node) {
+                    if seen.insert(&node) {
                         debug!("Latest fallback wave of {}: {}", node, w);
-                        seen.insert(node);
                     }
                 }
             }
