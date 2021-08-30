@@ -18,7 +18,7 @@ use log::info;
 use network::{MessageHandler, Receiver as NetworkReceiver, Writer};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -88,6 +88,8 @@ impl Primary {
         // Atomic variable use to synchronizer all tasks with the latest consensus round. This is only
         // used for cleanup. The only tasks that write into this variable is `GarbageCollector`.
         let consensus_round = Arc::new(AtomicU64::new(0));
+        // Flag indicating that we gathered a certificate on our header.
+        let certified = Arc::new(AtomicBool::new(true));
 
         // Spawn the network receiver listening to messages from the other primaries.
         let mut address = committee
@@ -148,6 +150,7 @@ impl Primary {
             signature_service.clone(),
             consensus_round.clone(),
             parameters.gc_depth,
+            certified.clone(),
             /* rx_primaries */ rx_primary_messages,
             /* rx_header_waiter */ rx_headers_loopback,
             /* rx_certificate_waiter */ rx_certificates_loopback,
@@ -195,6 +198,7 @@ impl Primary {
             signature_service,
             parameters.header_size,
             parameters.max_header_delay,
+            certified,
             /* rx_core */ rx_parents,
             /* rx_workers */ rx_our_digests,
             /* tx_core */ tx_headers,

@@ -12,7 +12,7 @@ use crypto::{Digest, PublicKey, SignatureService};
 use log::{debug, error, warn};
 use network::{CancelHandler, ReliableSender};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -36,6 +36,8 @@ pub struct Core {
     consensus_round: Arc<AtomicU64>,
     /// The depth of the garbage collector.
     gc_depth: Round,
+    /// Flag indicating that we gathered a certificate on our header.
+    certified: Arc<AtomicBool>,
 
     /// Receiver for dag messages (headers, votes, certificates).
     rx_primaries: Receiver<PrimaryMessage>,
@@ -78,6 +80,7 @@ impl Core {
         signature_service: SignatureService,
         consensus_round: Arc<AtomicU64>,
         gc_depth: Round,
+        certified: Arc<AtomicBool>,
         rx_primaries: Receiver<PrimaryMessage>,
         rx_header_waiter: Receiver<Header>,
         rx_certificate_waiter: Receiver<Certificate>,
@@ -94,6 +97,7 @@ impl Core {
                 signature_service,
                 consensus_round,
                 gc_depth,
+                certified,
                 rx_primaries,
                 rx_header_waiter,
                 rx_certificate_waiter,
@@ -269,6 +273,11 @@ impl Core {
     #[async_recursion]
     async fn process_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
         debug!("Processing {:?}", certificate);
+
+        // Indicate that our own header is certified.
+        if certificate.origin() == self.name {
+            self.certified.fetch_or(true, Ordering::Relaxed);
+        }
 
         // Process the header embedded in the certificate if we haven't already voted for it (if we already
         // voted, it means we already processed it). Since this header got certified, we are sure that all

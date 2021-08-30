@@ -9,6 +9,8 @@ use crypto::{Digest, PublicKey, SignatureService};
 use log::info;
 use log::{debug, log_enabled};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
@@ -26,6 +28,8 @@ pub struct Proposer {
     header_size: usize,
     /// The maximum delay to wait for batches' digests.
     max_header_delay: u64,
+    /// Flag indicating that we gathered a certificate on our header.
+    certified: Arc<AtomicBool>,
 
     /// Receives the parents to include in the next header (along with their round number).
     rx_core: Receiver<(Vec<Digest>, Round)>,
@@ -56,6 +60,7 @@ impl Proposer {
         signature_service: SignatureService,
         header_size: usize,
         max_header_delay: u64,
+        certified: Arc<AtomicBool>,
         rx_core: Receiver<(Vec<Digest>, Round)>,
         rx_workers: Receiver<(Digest, WorkerId)>,
         tx_core: Sender<Header>,
@@ -72,6 +77,7 @@ impl Proposer {
                 signature_service,
                 header_size,
                 max_header_delay,
+                certified,
                 rx_core,
                 rx_workers,
                 tx_core,
@@ -141,10 +147,14 @@ impl Proposer {
             let enough_parents = !self.last_parents.is_empty();
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
-            if (timer_expired || enough_digests) && enough_parents {
+            let certified = self.certified.load(Ordering::Relaxed);
+            if (timer_expired || enough_digests) && enough_parents && certified {
                 // Make a new header.
                 self.make_header().await;
                 self.payload_size = 0;
+
+                // Indicate that we do not have a certificate on our current header.
+                self.certified.fetch_and(false, Ordering::Relaxed);
 
                 // Reschedule the timer.
                 let deadline = Instant::now() + Duration::from_millis(self.max_header_delay);
