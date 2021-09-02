@@ -77,7 +77,7 @@ impl Dolphin {
         let timer = sleep(Duration::from_millis(self.timeout));
         tokio::pin!(timer);
 
-        let mut last_certificate_round = 0;
+        //let mut last_certificate_round = 0;
         let mut quorum = Some(self.genesis.iter().map(|x| (x.digest(), 0)).collect());
         let mut advance_early = true;
         loop {
@@ -90,7 +90,7 @@ impl Dolphin {
                 }
 
                 // Advance to the next round.
-                self.virtual_round = last_certificate_round + 1;
+                self.virtual_round += 1;
                 debug!("Virtual dag moved to round {}", self.virtual_round);
 
                 // Send the virtual parents to the primary's proposer.
@@ -111,7 +111,7 @@ impl Dolphin {
                 Some(certificate) = self.rx_certificate.recv() => {
                     debug!("Processing {:?}", certificate);
                     let virtual_round = certificate.virtual_round();
-                    last_certificate_round = virtual_round;
+                    //last_certificate_round = virtual_round;
 
                     // Add the new certificate to the local storage.
                     state.add(certificate.clone());
