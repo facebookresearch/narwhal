@@ -11,6 +11,8 @@ pub struct Committer {
     committee: Committee,
     /// The depth of the garbage collection.
     gc_depth: Round,
+
+    last_committed: Option<PublicKey>
 }
 
 impl Committer {
@@ -18,6 +20,7 @@ impl Committer {
         Self {
             committee,
             gc_depth,
+            None,
         }
     }
 
@@ -31,14 +34,18 @@ impl Committer {
         let mut sequence = Vec::new();
 
         // Update the leader mode to decide whether we can commit the leader.
-        let last_leader = self.update_validator_mode(&certificate, virtual_state);
+        let leader = self.update_validator_mode(&certificate, virtual_state);
 
         //if last_leader.is_none() && certificate.origin() == self.name {
         //    virtual_state.steady = false;
         //}
+
+        if self.last_committed.replace(leader) == Some(leader) {
+            return Vec::default();
+        }
         
 
-        if let Some(last_leader) = last_leader {
+        if let Some(last_leader) = leader {
             // Print the latest authorities' mode.
             if log_enabled!(log::Level::Debug) {
                 virtual_state.print_status(&certificate);
