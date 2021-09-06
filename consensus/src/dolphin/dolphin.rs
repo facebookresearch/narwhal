@@ -80,13 +80,17 @@ impl Dolphin {
         //let mut last_certificate_round = 0;
         let mut quorum = Some(self.genesis.iter().map(|x| (x.digest(), 0)).collect());
         let mut advance_early = true;
+        let mut previously_timeout = false;
         loop {
             if (timer.is_elapsed() || advance_early) && quorum.is_some() {
                 if timer.is_elapsed() {
+                    previously_timeout = true;
                     warn!(
                         "Timing out for round {}, moving to the next round",
                         self.virtual_round
                     );
+                } else {
+                    previously_timeout = false;
                 }
 
                 // Advance to the next round.
@@ -180,7 +184,7 @@ impl Dolphin {
                         debug!("Got quorum for round {}: {}", self.virtual_round, quorum.is_some());
 
                         advance_early = match virtual_round % 2 {
-                            0 => self.qc(virtual_round, &virtual_state) || self.tc(virtual_round, &virtual_state),
+                            0 => self.qc(virtual_round, &virtual_state) || self.tc(virtual_round, &virtual_state) || previously_timeout,
                             _ => virtual_state.steady_leader((virtual_round+1)/2).is_some(),
                         };
                         debug!("Can early advance for round {}: {}", self.virtual_round, advance_early);
