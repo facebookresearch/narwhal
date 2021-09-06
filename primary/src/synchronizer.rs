@@ -136,6 +136,7 @@ impl Synchronizer {
                 .send(WaiterMessage::SyncParents(missing, header.clone()))
                 .await
                 .expect("Failed to send sync parents request");
+            return Ok(false);
         }
         Ok(true)
     }
