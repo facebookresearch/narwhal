@@ -18,6 +18,8 @@ pub struct VirtualState {
     pub steady_authorities_sets: HashMap<Round, HashSet<PublicKey>>,
     /// Keeps tracks of authorities in the fallback state.
     pub fallback_authorities_sets: HashMap<Round, HashSet<PublicKey>>,
+
+    pub steady_state: bool
 }
 
 impl VirtualState {
@@ -36,6 +38,7 @@ impl VirtualState {
                 .cloned()
                 .collect(),
             fallback_authorities_sets: HashMap::new(),
+            steady_state: true
         }
     }
 

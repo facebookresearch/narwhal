@@ -33,7 +33,10 @@ impl Committer {
         // Update the leader mode to decide whether we can commit the leader.
         let last_leader = self.update_validator_mode(&certificate, virtual_state);
 
-        //let fallback = last_leader.is_none() && certificate.origin() == self.name;
+        //if last_leader.is_none() && certificate.origin() == self.name {
+        //    virtual_state.steady = false;
+        //}
+        
 
         if let Some(last_leader) = last_leader {
             // Print the latest authorities' mode.

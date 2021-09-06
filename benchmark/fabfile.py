@@ -107,7 +107,7 @@ def remote(ctx, debug=True):
         'protocol': 'dolphin'
     }
     node_params = {
-        'timeout': 30_000,  # ms
+        'timeout': 10_000,  # ms
         'header_size': 1_000,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
