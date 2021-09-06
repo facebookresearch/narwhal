@@ -46,7 +46,7 @@ impl Committer {
                 virtual_state.print_status(&certificate);
             }
 
-            // Don't double-commit
+            // Don't double-commit.
             let last_committed_wave = (last_leader.virtual_round() + 1) / 2;
             if self.last_committed >= last_committed_wave {
                 return Vec::default();
