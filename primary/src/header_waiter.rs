@@ -230,6 +230,7 @@ impl HeaderWaiter {
                             let _ = self.batch_requests.remove(x);
                         }
                         for x in &header.parents {
+                            debug!("Deleting {} from sync obligations: We got it", x);
                             let _ = self.parent_requests.remove(x);
                         }
                         self.tx_core.send(header).await.expect("Failed to send header");
