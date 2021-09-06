@@ -148,7 +148,8 @@ impl Proposer {
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
             let certified = self.certified.load(Ordering::Relaxed);
-            if (timer_expired || enough_digests) && enough_parents && certified {
+            let advance_early = !self.metadata.is_empty();
+            if (timer_expired || enough_digests || advance_early) && enough_parents && certified {
                 // Make a new header.
                 self.make_header().await;
                 self.payload_size = 0;
@@ -179,7 +180,7 @@ impl Proposer {
                     self.digests.push((digest, worker_id));
                 }
                 Some(metadata) = self.rx_consensus.recv() => {
-                    self.metadata.push_front(metadata)
+                    self.metadata.push_front(metadata);
                 }
                 () = &mut timer => {
                     // Nothing to do.
