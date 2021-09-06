@@ -147,7 +147,7 @@ impl Proposer {
             let enough_parents = !self.last_parents.is_empty();
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
-            let certified = self.certified.load(Ordering::Relaxed);
+            //let certified = self.certified.load(Ordering::Relaxed);
             let advance_early = !self.metadata.is_empty();
             if (timer_expired || enough_digests) && enough_parents && advance_early{
                 // Make a new header.
@@ -155,7 +155,7 @@ impl Proposer {
                 self.payload_size = 0;
 
                 // Indicate that we do not have a certificate on our current header.
-                self.certified.fetch_and(false, Ordering::Relaxed);
+                //self.certified.fetch_and(false, Ordering::Relaxed);
 
                 // Reschedule the timer.
                 let deadline = Instant::now() + Duration::from_millis(self.max_header_delay);

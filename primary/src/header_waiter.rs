@@ -240,7 +240,7 @@ impl HeaderWaiter {
                     },
                     Err(e) => {
                         error!("{}", e);
-                        panic!("Storage failure: killing node.");
+                        panic!("Storage failure: killing node");
                     }
                 },
 
