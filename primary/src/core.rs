@@ -335,10 +335,10 @@ impl Core {
     }
 
     fn sanitize_header(&mut self, header: &Header) -> DagResult<()> {
-        ensure!(
-            self.gc_round < header.round,
-            DagError::TooOld(header.id.clone(), header.round)
-        );
+        //ensure!(
+        //    self.gc_round < header.round,
+        //    DagError::TooOld(header.id.clone(), header.round)
+        //);
 
         // Verify the header's signature.
         header.verify(&self.committee)?;
