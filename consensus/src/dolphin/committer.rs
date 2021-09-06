@@ -12,7 +12,7 @@ pub struct Committer {
     /// The depth of the garbage collection.
     gc_depth: Round,
 
-    last_committed: Option<PublicKey>
+    last_committed: Round
 }
 
 impl Committer {
@@ -20,13 +20,13 @@ impl Committer {
         Self {
             committee,
             gc_depth,
-            None,
+            last_committed: 0,
         }
     }
 
     /// Try to commit. If we succeed, output am ordered sequence.
     pub fn try_commit(
-        &self,
+        &mut self,
         certificate: &Certificate,
         state: &mut State,
         virtual_state: &mut VirtualState,
@@ -40,19 +40,20 @@ impl Committer {
         //    virtual_state.steady = false;
         //}
 
-        if self.last_committed.replace(leader) == Some(leader) {
-            return Vec::default();
-        }
-        
-
         if let Some(last_leader) = leader {
             // Print the latest authorities' mode.
             if log_enabled!(log::Level::Debug) {
                 virtual_state.print_status(&certificate);
             }
 
-            // Get an ordered list of past leaders that are linked to the current leader.
+            // Don't double-commit
             let last_committed_wave = (last_leader.virtual_round() + 1) / 2;
+            if self.last_committed >= last_committed_wave {
+                return Vec::default();
+            }
+            self.last_committed = last_committed_wave;
+
+            // Get an ordered list of past leaders that are linked to the current leader.
             for leader in self
                 .order_leaders(&last_leader, &virtual_state, last_committed_wave)
                 .iter()
