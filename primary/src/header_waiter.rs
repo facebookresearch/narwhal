@@ -256,6 +256,16 @@ impl HeaderWaiter {
                     let mut retry = Vec::new();
                     for (digest, (_, timestamp)) in &self.parent_requests {
                         if timestamp + (self.sync_retry_delay as u128) < now {
+                            if self
+                                .store
+                                .read(digest.to_vec())
+                                .await
+                                .expect("Failed to read from store")
+                                .is_some() 
+                            {
+                                continue;
+                            }
+                            
                             debug!("Requesting sync for certificate {} (retry)", digest);
                             retry.push(digest.clone());
                         }

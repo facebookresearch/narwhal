@@ -421,7 +421,7 @@ impl Core {
                 Some(header) = self.rx_proposer.recv() => self.process_own_header(header).await,
             };
             match result {
-                Ok(()) => (),
+                Ok(()) | Err(DagError::VoteTooOld(..)) => (),
                 Err(DagError::StoreError(e)) => {
                     error!("{}", e);
                     panic!("Storage failure: killing node.");
