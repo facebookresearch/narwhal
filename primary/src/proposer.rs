@@ -149,7 +149,7 @@ impl Proposer {
             let timer_expired = timer.is_elapsed();
             //let certified = self.certified.load(Ordering::Relaxed);
             let advance_early = !self.metadata.is_empty();
-            if (timer_expired || enough_digests || advance_early) && enough_parents {
+            if (timer_expired || enough_digests) && enough_parents {
                 // Make a new header.
                 self.make_header().await;
                 self.payload_size = 0;
