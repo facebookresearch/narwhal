@@ -31,7 +31,11 @@ impl Committer {
         let mut sequence = Vec::new();
 
         // Update the leader mode to decide whether we can commit the leader.
-        if let Some(last_leader) = self.update_validator_mode(&certificate, virtual_state) {
+        let last_leader = self.update_validator_mode(&certificate, virtual_state);
+
+        //let fallback = last_leader.is_none() && certificate.origin() == self.name;
+
+        if let Some(last_leader) = last_leader {
             // Print the latest authorities' mode.
             if log_enabled!(log::Level::Debug) {
                 virtual_state.print_status(&certificate);

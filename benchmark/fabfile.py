@@ -97,17 +97,17 @@ def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [10],
+        'nodes': [4],
         'workers': 1,
         'collocate': True,
-        'rate': [50_000],
+        'rate': [20_000],
         'tx_size': 512,
         'duration': 300,
         'runs': 1,
         'protocol': 'dolphin'
     }
     node_params = {
-        'timeout': 5_000,  # ms
+        'timeout': 30_000,  # ms
         'header_size': 1_000,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
