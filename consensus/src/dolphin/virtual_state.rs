@@ -61,11 +61,11 @@ impl VirtualState {
         let ok = certificate
             .virtual_parents()
             .iter()
-            .all(|x| previous_round_certificates.contains(x))
-            && self
-                .dag
-                .get(&(round - 1))
-                .map_or_else(|| false, |x| x.contains_key(&certificate.origin()));
+            .all(|x| previous_round_certificates.contains(x));
+            //&& self
+            //    .dag
+            //    .get(&(round - 1))
+            //    .map_or_else(|| false, |x| x.contains_key(&certificate.origin()));
 
         // Add the certificate to the dag.
         if ok {
