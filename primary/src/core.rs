@@ -351,7 +351,7 @@ impl Core {
     fn sanitize_vote(&mut self, vote: &Vote) -> DagResult<()> {
         ensure!(
             self.current_header.round <= vote.round,
-            DagError::TooOld(vote.digest(), vote.round)
+            DagError::VoteTooOld(vote.digest(), vote.round)
         );
 
         // Ensure we receive a vote on the expected header.
