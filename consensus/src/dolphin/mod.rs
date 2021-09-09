@@ -1,3 +1,3 @@
 mod committer;
-pub(crate) mod dolphin;
+pub(crate) mod core;
 mod virtual_state;

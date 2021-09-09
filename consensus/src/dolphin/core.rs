@@ -3,7 +3,7 @@ use crate::dolphin::committer::Committer;
 use crate::dolphin::virtual_state::VirtualState;
 use crate::state::State;
 use config::{Committee, Stake};
-use crypto::{Hash as _, PublicKey};
+use crypto::Hash as _;
 use log::{debug, info, log_enabled, warn};
 use primary::{Certificate, Metadata, Round};
 use std::collections::BTreeSet;
@@ -11,8 +11,6 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
 pub struct Dolphin {
-    /// The name of this authority.
-    name: PublicKey,
     /// The committee information.
     committee: Committee,
     /// The leader timeout value.
@@ -41,7 +39,6 @@ pub struct Dolphin {
 impl Dolphin {
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
-        name: PublicKey,
         committee: Committee,
         timeout: u64,
         gc_depth: Round,
@@ -52,7 +49,6 @@ impl Dolphin {
     ) {
         tokio::spawn(async move {
             Self {
-                name,
                 committee: committee.clone(),
                 timeout,
                 gc_depth,

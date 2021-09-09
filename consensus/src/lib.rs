@@ -9,4 +9,4 @@ mod tusk;
 pub use crate::tusk::Tusk;
 
 #[cfg(feature = "dolphin")]
-pub use crate::dolphin::dolphin::Dolphin;
+pub use crate::dolphin::core::Dolphin;

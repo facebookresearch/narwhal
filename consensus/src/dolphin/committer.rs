@@ -12,7 +12,7 @@ pub struct Committer {
     /// The depth of the garbage collection.
     gc_depth: Round,
 
-    last_committed: Round
+    last_committed: Round,
 }
 
 impl Committer {

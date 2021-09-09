@@ -122,7 +122,7 @@ impl Synchronizer {
         if let Some(metadata) = header.metadata.as_ref() {
             let mut missing = Vec::new();
             for (digest, round) in &metadata.virtual_parents {
-                if gc_round >= round || self.genesis.iter().find(|(x, _)| x == digest).is_some() {
+                if gc_round >= round || self.genesis.iter().any(|(x, _)| x == digest) {
                     continue;
                 }
                 if self.store.read(digest.to_vec()).await?.is_none() {

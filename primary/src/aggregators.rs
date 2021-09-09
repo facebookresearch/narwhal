@@ -48,16 +48,14 @@ impl VotesAggregator {
 
 /// Aggregate certificates and check if we reach a quorum.
 pub struct CertificatesAggregator {
-    name: PublicKey,
     weight: Stake,
     certificates: Vec<Digest>,
     used: HashSet<PublicKey>,
 }
 
 impl CertificatesAggregator {
-    pub fn new(name: PublicKey) -> Self {
+    pub fn new() -> Self {
         Self {
-            name,
             weight: 0,
             certificates: Vec::new(),
             used: HashSet::new(),

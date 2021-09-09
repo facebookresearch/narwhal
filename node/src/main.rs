@@ -113,18 +113,16 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
                 let _not_used = tx_metadata;
             }
             #[cfg(feature = "dolphin")]
-            {
-                Dolphin::spawn(
-                    keypair.name,
-                    committee.clone(),
-                    parameters.timeout,
-                    parameters.gc_depth,
-                    /* rx_primary */ rx_new_certificates,
-                    tx_commit,
-                    tx_metadata,
-                    tx_output,
-                );
-            }
+            Dolphin::spawn(
+                committee.clone(),
+                parameters.timeout,
+                parameters.gc_depth,
+                /* rx_primary */ rx_new_certificates,
+                tx_commit,
+                tx_metadata,
+                tx_output,
+            );
+
             Primary::spawn(
                 keypair,
                 committee,

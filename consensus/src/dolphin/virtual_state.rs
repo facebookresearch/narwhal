@@ -19,7 +19,7 @@ pub struct VirtualState {
     /// Keeps tracks of authorities in the fallback state.
     pub fallback_authorities_sets: HashMap<Round, HashSet<PublicKey>>,
 
-    pub steady_state: bool
+    pub steady_state: bool,
 }
 
 impl VirtualState {
@@ -38,7 +38,7 @@ impl VirtualState {
                 .cloned()
                 .collect(),
             fallback_authorities_sets: HashMap::new(),
-            steady_state: true
+            steady_state: true,
         }
     }
 
@@ -62,10 +62,10 @@ impl VirtualState {
             .virtual_parents()
             .iter()
             .all(|x| previous_round_certificates.contains(x));
-            //&& self
-            //    .dag
-            //    .get(&(round - 1))
-            //    .map_or_else(|| false, |x| x.contains_key(&certificate.origin()));
+        //&& self
+        //    .dag
+        //    .get(&(round - 1))
+        //    .map_or_else(|| false, |x| x.contains_key(&certificate.origin()));
 
         // Add the certificate to the dag.
         if ok {

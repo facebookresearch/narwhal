@@ -262,7 +262,7 @@ impl HeaderWaiter {
                                 .read(digest.to_vec())
                                 .await
                                 .expect("Failed to read from store")
-                                .is_some() 
+                                .is_some()
                             {
                                 self.parent_requests.remove(digest);
                                 continue;
