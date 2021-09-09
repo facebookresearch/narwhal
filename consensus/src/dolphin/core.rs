@@ -70,23 +70,19 @@ impl Dolphin {
         let mut state = State::new(self.gc_depth, self.genesis.clone());
         let mut virtual_state = VirtualState::new(self.committee.clone(), self.genesis.clone());
 
+        // The timer keeping track of the leader timeout.
         let timer = sleep(Duration::from_millis(self.timeout));
         tokio::pin!(timer);
 
-        //let mut last_certificate_round = 0;
         let mut quorum = Some(self.genesis.iter().map(|x| (x.digest(), 0)).collect());
         let mut advance_early = true;
-        let mut previously_timeout = false;
         loop {
             if (timer.is_elapsed() || advance_early) && quorum.is_some() {
-                if timer.is_elapsed() {
-                    previously_timeout = true;
+                if !advance_early {
                     warn!(
                         "Timing out for round {}, moving to the next round",
                         self.virtual_round
                     );
-                } else {
-                    previously_timeout = false;
                 }
 
                 // Advance to the next round.
@@ -103,15 +99,14 @@ impl Dolphin {
                 let deadline = Instant::now() + Duration::from_millis(self.timeout);
                 timer.as_mut().reset(deadline);
 
+                // Reset the quorum.
                 quorum = None;
-                advance_early = false;
             }
 
             tokio::select! {
                 Some(certificate) = self.rx_certificate.recv() => {
                     debug!("Processing {:?}", certificate);
                     let virtual_round = certificate.virtual_round();
-                    //last_certificate_round = virtual_round;
 
                     // Add the new certificate to the local storage.
                     state.add(certificate.clone());
@@ -172,18 +167,18 @@ impl Dolphin {
                         .unzip();
 
                     //if authors.iter().any(|x| x == &self.name) {
-                        quorum = (authors
-                            .iter()
-                            .map(|x| self.committee.stake(x))
-                            .sum::<Stake>() >= self.committee.quorum_threshold())
-                            .then(|| parents);
-                        debug!("Got quorum for round {}: {}", self.virtual_round, quorum.is_some());
+                    quorum = (authors
+                        .iter()
+                        .map(|x| self.committee.stake(x))
+                        .sum::<Stake>() >= self.committee.quorum_threshold())
+                        .then(|| parents);
+                    debug!("Got quorum for round {}: {}", self.virtual_round, quorum.is_some());
 
-                        advance_early = match virtual_round % 2 {
-                            0 => self.qc(virtual_round, &virtual_state) || self.tc(virtual_round, &virtual_state) || previously_timeout,
-                            _ => virtual_state.steady_leader((virtual_round+1)/2).is_some(),
-                        };
-                        debug!("Can early advance for round {}: {}", self.virtual_round, advance_early);
+                    advance_early = match virtual_round % 2 {
+                        0 => self.enough_votes(virtual_round, &virtual_state) || !advance_early,
+                        _ => virtual_state.steady_leader((virtual_round+1)/2).is_some(),
+                    };
+                    debug!("Can early advance for round {}: {}", self.virtual_round, advance_early);
                     //}
                 },
                 () = &mut timer => {
@@ -194,11 +189,12 @@ impl Dolphin {
     }
 
     /// Check if we gathered a quorum of votes for the leader.
-    fn qc(&mut self, virtual_round: Round, virtual_state: &VirtualState) -> bool {
+    fn enough_votes(&mut self, virtual_round: Round, virtual_state: &VirtualState) -> bool {
         let wave = (virtual_round + 1) / 2;
         virtual_state.steady_leader(wave - 1).map_or_else(
             || false,
             |(leader_digest, _)| {
+                // Either we got 2f+1 votes for the leader.
                 virtual_state
                     .dag
                     .get(&virtual_round)
@@ -208,25 +204,17 @@ impl Dolphin {
                     .map(|(_, x)| self.committee.stake(&x.origin()))
                     .sum::<Stake>()
                     >= self.committee.quorum_threshold()
-            },
-        )
-    }
 
-    /// Check if it is impossible to gather a quorum of votes on the leader.
-    fn tc(&mut self, virtual_round: Round, virtual_state: &VirtualState) -> bool {
-        let wave = (virtual_round + 1) / 2;
-        virtual_state.steady_leader(wave - 1).map_or_else(
-            || false,
-            |(leader_digest, _)| {
-                virtual_state
-                    .dag
-                    .get(&virtual_round)
-                    .expect("We just added a certificate with this round")
-                    .values()
-                    .filter(|(_, x)| !x.virtual_parents().contains(&leader_digest))
-                    .map(|(_, x)| self.committee.stake(&x.origin()))
-                    .sum::<Stake>()
-                    >= self.committee.validity_threshold()
+                // Or we go f+1 votes that are not for the leader.
+                    || virtual_state
+                        .dag
+                        .get(&virtual_round)
+                        .expect("We just added a certificate with this round")
+                        .values()
+                        .filter(|(_, x)| !x.virtual_parents().contains(&leader_digest))
+                        .map(|(_, x)| self.committee.stake(&x.origin()))
+                        .sum::<Stake>()
+                        >= self.committee.validity_threshold()
             },
         )
     }
