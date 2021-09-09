@@ -142,6 +142,7 @@ impl Proposer {
 
             tokio::select! {
                 Some(certificate) = self.rx_mempool.recv() => {
+                    debug!("Received {:?}", certificate);
                     self.tx_committer
                         .send(certificate.clone())
                         .await
