@@ -42,14 +42,14 @@ class Committee:
         }
     '''
 
-    def __init__(self, addresses, base_port):
+    def __init__(self, base_port):
         ''' The `addresses` field looks as follows:
             { 
                 "name": ["host", "host", ...],
                 ...
             }
         '''
-        assert isinstance(addresses, OrderedDict)
+        # assert isinstance(addresses, OrderedDict)
         assert all(isinstance(x, str) for x in addresses.keys())
         assert all(
             isinstance(x, list) and len(x) > 1 for x in addresses.values()
@@ -62,8 +62,15 @@ class Committee:
 
         port = base_port
         self.json = {'authorities': OrderedDict()}
-        for name, hosts in addresses.items():
-            host = hosts.pop(0)
+
+        # read from json file to get the ip address
+        json_file = open('./ips.jsonn')
+        addresses = json.load(json_file)
+
+        for ip_obj in addresses['ip_list']:
+            host = ip_obj['ip'][0]
+            name = ip_obj['name']
+
             primary_addr = {
                 'primary_to_primary': f'{host}:{port}',
                 'worker_to_primary': f'{host}:{port + 1}'
@@ -71,7 +78,7 @@ class Committee:
             port += 2
 
             workers_addr = OrderedDict()
-            for j, host in enumerate(hosts):
+            for j, host in enumerate(ip_obj['ip']):
                 workers_addr[j] = {
                     'primary_to_worker': f'{host}:{port}',
                     'transactions': f'{host}:{port + 1}',
@@ -157,8 +164,8 @@ class LocalCommittee(Committee):
         assert all(isinstance(x, str) for x in names)
         assert isinstance(port, int)
         assert isinstance(workers, int) and workers > 0
-        addresses = OrderedDict((x, ['127.0.0.1']*(1+workers)) for x in names)
-        super().__init__(addresses, port)
+        # addresses = OrderedDict((x, ['127.0.0.1']*(1+workers)) for x in names)
+        super().__init__(port)
 
 
 class NodeParameters:
