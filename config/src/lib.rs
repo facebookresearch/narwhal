@@ -180,6 +180,17 @@ impl Committee {
         (total_votes + 2) / 3
     }
 
+    /// Returns a leader node in a round-robin fashion.
+    pub fn leader(&self, seed: usize) -> PublicKey {
+        #[cfg(test)]
+        let seed = 0;
+
+        // Elect the leader.
+        let mut keys: Vec<_> = self.authorities.keys().cloned().collect();
+        keys.sort();
+        keys[seed % self.size()]
+    }
+
     /// Returns the primary addresses of the target primary.
     pub fn primary(&self, to: &PublicKey) -> Result<PrimaryAddresses, ConfigError> {
         self.authorities

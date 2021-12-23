@@ -48,7 +48,7 @@ pub struct Core {
     /// Output all certificates to the consensus layer.
     tx_consensus: Sender<Certificate>,
     /// Send valid a quorum of certificates' ids to the `Proposer` (along with their round).
-    tx_proposer: Sender<(Vec<Digest>, Round)>,
+    tx_proposer: Sender<(Vec<Certificate>, Round)>,
 
     /// The last garbage collected round.
     gc_round: Round,
@@ -83,7 +83,7 @@ impl Core {
         rx_certificate_waiter: Receiver<Certificate>,
         rx_proposer: Receiver<Header>,
         tx_consensus: Sender<Certificate>,
-        tx_proposer: Sender<(Vec<Digest>, Round)>,
+        tx_proposer: Sender<(Vec<Certificate>, Round)>,
     ) {
         tokio::spawn(async move {
             Self {
