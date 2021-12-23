@@ -140,7 +140,7 @@ impl Consensus {
                 .get(&round)
                 .expect("We should have the whole history by now")
                 .values()
-                .filter(|(_, x)| x.header.parents.contains(&leader_digest))
+                .filter(|(_, x)| x.header.parents.contains(leader_digest))
                 .map(|(_, x)| self.committee.stake(&x.origin()))
                 .sum();
 
@@ -208,9 +208,7 @@ impl Consensus {
         let coin = round;
 
         // Elect the leader.
-        let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
-        keys.sort();
-        let leader = keys[coin as usize % self.committee.size()];
+        let leader = self.committee.leader(coin as usize);
 
         // Return its certificate and the certificate's digest.
         dag.get(&round).map(|x| x.get(&leader)).flatten()

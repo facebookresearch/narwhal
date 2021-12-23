@@ -4,9 +4,10 @@ use crate::primary::Round;
 use config::{Committee, WorkerId};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
-use log::debug;
 #[cfg(feature = "benchmark")]
 use log::info;
+use log::{debug, log_enabled, warn};
+use std::cmp::Ordering;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
@@ -105,6 +106,17 @@ impl Proposer {
             .expect("Failed to send header");
     }
 
+    /// Update the last leader.
+    fn update_last_leader(&mut self) {
+        let leader_round = self.round - 1;
+        let leader_name = self.committee.leader(leader_round as usize);
+        self.last_leader = self
+            .last_parents
+            .iter()
+            .find(|x| x.origin() == leader_name)
+            .cloned();
+    }
+
     /// Check if the last parent contains the leader.
     fn got_leader(&self) -> bool {
         self.last_leader
@@ -133,10 +145,10 @@ impl Proposer {
         }
 
         let mut enough_votes = votes_for_leader >= self.committee.quorum_threshold();
-        if enough_votes {
-            self.last_leader
-                .as_ref()
-                .map(|x| debug!("Got enough support for leader {}", x.origin()));
+        if log_enabled!(log::Level::Debug) && enough_votes {
+            if let Some(leader) = self.last_leader.as_ref() {
+                debug!("Got enough support for leader {}", leader.origin());
+            }
         }
         enough_votes |= no_votes >= self.committee.validity_threshold();
         enough_votes
@@ -151,15 +163,17 @@ impl Proposer {
         tokio::pin!(timer);
 
         loop {
-            // Check if we can propose a new header. We propose a new header when one of the following
-            // conditions is met:
-            // TODO.
+            // Check if we can propose a new header. We propose a new header when we have a quorum of parents
+            // and one of the following conditions is met:
+            // (i) the timer expired (we timed out on the leader or gave up gather votes for the leader),
+            // (ii) we have enough digests (minimum header size) and we are on the happy path (we can vote for
+            // the leader or the leader has enough votes to enable a commit).
             let enough_parents = !self.last_parents.is_empty();
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
 
             if timer_expired {
-                debug!("Timer expired for round {}", self.round);
+                warn!("Timer expired for round {}", self.round);
             }
 
             if (timer_expired || (enough_digests && advance)) && enough_parents {
@@ -178,28 +192,36 @@ impl Proposer {
 
             tokio::select! {
                 Some((parents, round)) = self.rx_core.recv() => {
-                    if round > self.round {
-                        self.round = round;
-                        self.last_parents = parents;
-                    } else if round == self.round {
-                        self.last_parents.extend(parents);
+                    // Compare the parents' round number with our current round.
+                    match round.cmp(&self.round) {
+                        Ordering::Greater => {
+                            // We accept round bigger than our current round to jump ahead in case we were
+                            // late (or just joined the network).
+                            self.round = round;
+                            self.last_parents = parents;
+                        },
+                        Ordering::Less => {
+                            // Ignore parents from older rounds.
+                        },
+                        Ordering::Equal => {
+                            // The core gives us the parents the first time they are enough to form a quorum.
+                            // Then it keeps giving us all the extra parents.
+                            self.last_parents.extend(parents)
+                        }
                     }
 
-                    self.last_leader = (self.round % 2 == 1)
-                        .then(|| {
-                            let leader_round = self.round - 1;
-                            let leader_name = self.committee.leader(leader_round as usize);
-                            self.last_parents
-                                .iter()
-                                .find(|x| x.origin() == leader_name)
-                                .cloned()
-                        })
-                        .flatten();
-
+                    // Check whether we can advance to the next round. Note that if we timeout,
+                    // we ignore this check and advance anyway.
                     advance = match self.round % 2 {
                         0 => self.enough_votes(),
-                        _ => self.got_leader(),
-                    };
+                        _ => {
+                            // Update the latest leader.
+                            self.update_last_leader();
+
+                            // Check whether we got a leader. If we do, we are ready to vote for it.
+                            self.got_leader()
+                        }
+                    }
                 }
                 Some((digest, worker_id)) = self.rx_workers.recv() => {
                     self.payload_size += digest.size();

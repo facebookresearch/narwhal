@@ -152,7 +152,7 @@ impl Committee {
 
     /// Return the stake of a specific authority.
     pub fn stake(&self, name: &PublicKey) -> Stake {
-        self.authorities.get(&name).map_or_else(|| 0, |x| x.stake)
+        self.authorities.get(name).map_or_else(|| 0, |x| x.stake)
     }
 
     /// Returns the stake of all authorities except `myself`.
@@ -182,10 +182,6 @@ impl Committee {
 
     /// Returns a leader node in a round-robin fashion.
     pub fn leader(&self, seed: usize) -> PublicKey {
-        #[cfg(test)]
-        let seed = 0;
-
-        // Elect the leader.
         let mut keys: Vec<_> = self.authorities.keys().cloned().collect();
         keys.sort();
         keys[seed % self.size()]
