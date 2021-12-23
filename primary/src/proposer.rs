@@ -155,7 +155,7 @@ impl Proposer {
             // conditions is met:
             // TODO.
             let enough_parents = !self.last_parents.is_empty();
-            let enough_digests = true; //self.payload_size >= self.header_size;
+            let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
 
             if timer_expired {
