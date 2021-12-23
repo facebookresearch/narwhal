@@ -145,6 +145,7 @@ impl Proposer {
     /// Main loop listening to incoming messages.
     pub async fn run(&mut self) {
         debug!("Dag starting at round {}", self.round);
+        let mut advance = true;
 
         let timer = sleep(Duration::from_millis(self.max_header_delay));
         tokio::pin!(timer);
@@ -154,26 +155,12 @@ impl Proposer {
             // conditions is met:
             // TODO.
             let enough_parents = !self.last_parents.is_empty();
-            let enough_digests = self.payload_size >= self.header_size;
+            let enough_digests = true; //self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
 
-            // TODO: Bad design, this is computed every time we add a digest... Move it to the
-            // first select! branch.
-            self.last_leader = (self.round % 2 == 1)
-                .then(|| {
-                    let leader_round = self.round - 1;
-                    let leader_name = self.committee.leader(leader_round as usize);
-                    self.last_parents
-                        .iter()
-                        .find(|x| x.origin() == leader_name)
-                        .cloned()
-                })
-                .flatten();
-
-            let advance = match self.round % 2 {
-                0 => self.enough_votes(),
-                _ => self.got_leader(),
-            };
+            if timer_expired {
+                debug!("Timer expired for round {}", self.round);
+            }
 
             if (timer_expired || (enough_digests && advance)) && enough_parents {
                 // Advance to the next round.
@@ -197,6 +184,22 @@ impl Proposer {
                     } else if round == self.round {
                         self.last_parents.extend(parents);
                     }
+
+                    self.last_leader = (self.round % 2 == 1)
+                        .then(|| {
+                            let leader_round = self.round - 1;
+                            let leader_name = self.committee.leader(leader_round as usize);
+                            self.last_parents
+                                .iter()
+                                .find(|x| x.origin() == leader_name)
+                                .cloned()
+                        })
+                        .flatten();
+
+                    advance = match self.round % 2 {
+                        0 => self.enough_votes(),
+                        _ => self.got_leader(),
+                    };
                 }
                 Some((digest, worker_id)) = self.rx_workers.recv() => {
                     self.payload_size += digest.size();

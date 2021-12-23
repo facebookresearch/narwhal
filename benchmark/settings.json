@@ -1,7 +1,7 @@
 {
     "key": {
         "name": "aws",
-        "path": "/Users/asonnino/.ssh/aws.pem"
+        "path": "/Users/asonnino/.ssh/aws"
     },
     "port": 5000,
     "repo": {
