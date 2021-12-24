@@ -169,6 +169,10 @@ impl Proposer {
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
 
+            if timer_expired {
+                warn!("Timer expired for round {}", self.round);
+            }
+
             if (timer_expired || (enough_digests && advance)) && enough_parents {
                 // Advance to the next round.
                 self.round += 1;
@@ -215,7 +219,7 @@ impl Proposer {
                     self.digests.push((digest, worker_id));
                 }
                 () = &mut timer => {
-                    warn!("Timer expired for round {}", self.round);
+                    // Nothing to do.
                 }
             }
         }

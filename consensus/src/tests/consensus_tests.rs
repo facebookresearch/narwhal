@@ -140,7 +140,7 @@ async fn dead_node() {
         .map(|x| x.digest())
         .collect::<BTreeSet<_>>();
 
-    let (mut certificates, _) = make_certificates(1, 10, &genesis, &keys);
+    let (mut certificates, _) = make_certificates(1, 9, &genesis, &keys);
 
     // Spawn the consensus engine and sink the primary channel.
     let (tx_waiter, rx_waiter) = channel(1);
@@ -163,8 +163,7 @@ async fn dead_node() {
     });
 
     // We should commit 4 leaders (rounds 2, 4, 6, and 8).
-    for i in 1..=27 {
-        println!("{}", i);
+    for i in 1..=21 {
         let certificate = rx_output.recv().await.unwrap();
         let expected = ((i - 1) / keys.len() as u64) + 1;
         assert_eq!(certificate.round(), expected);
@@ -222,13 +221,15 @@ async fn not_enough_support() {
 
     parents = next_parents.clone();
 
-    // Rounds 4, 5, and 6: Fully connected graph.
+    // Rounds 4: Fully connected graph.
     let nodes: Vec<_> = keys.iter().cloned().take(3).collect();
-    let (out, parents) = make_certificates(4, 6, &parents, &nodes);
+    let (out, parents) = make_certificates(4, 4, &parents, &nodes);
     certificates.extend(out);
 
-    // Round 7: Send a single certificate to trigger the commits.
-    let (_, certificate) = mock_certificate(keys[0], 7, parents);
+    // Round 5: Send f+1 certificates to trigger the commit of leader 4.
+    let (_, certificate) = mock_certificate(keys[0], 5, parents.clone());
+    certificates.push_back(certificate);
+    let (_, certificate) = mock_certificate(keys[1], 5, parents);
     certificates.push_back(certificate);
 
     // Spawn the consensus engine and sink the primary channel.
