@@ -79,20 +79,22 @@ fn make_certificates(
     (certificates, next_parents)
 }
 
-// Run for 4 dag rounds in ideal conditions (all nodes reference all other nodes). We should commit
+// Run for 2 dag rounds in ideal conditions (all nodes reference all other nodes). We should commit
 // the leader of round 2.
 #[tokio::test]
 async fn commit_one() {
-    // Make certificates for rounds 1 to 4.
+    // Make certificates for rounds 1 and 2.
     let keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     let genesis = Certificate::genesis(&mock_committee())
         .iter()
         .map(|x| x.digest())
         .collect::<BTreeSet<_>>();
-    let (mut certificates, next_parents) = make_certificates(1, 4, &genesis, &keys);
+    let (mut certificates, next_parents) = make_certificates(1, 2, &genesis, &keys);
 
-    // Make one certificate with round 5 to trigger the commits.
-    let (_, certificate) = mock_certificate(keys[0], 5, next_parents);
+    // Make two certificate (f+1) with round 3 to trigger the commits.
+    let (_, certificate) = mock_certificate(keys[0], 3, next_parents.clone());
+    certificates.push_back(certificate);
+    let (_, certificate) = mock_certificate(keys[1], 3, next_parents);
     certificates.push_back(certificate);
 
     // Spawn the consensus engine and sink the primary channel.
@@ -125,7 +127,7 @@ async fn commit_one() {
 }
 
 // Run for 8 dag rounds with one dead node node (that is not a leader). We should commit the leaders of
-// rounds 2, 4, and 6.
+// rounds 2, 4, 6, and 8.
 #[tokio::test]
 async fn dead_node() {
     // Make the certificates.
@@ -138,7 +140,7 @@ async fn dead_node() {
         .map(|x| x.digest())
         .collect::<BTreeSet<_>>();
 
-    let (mut certificates, _) = make_certificates(1, 9, &genesis, &keys);
+    let (mut certificates, _) = make_certificates(1, 10, &genesis, &keys);
 
     // Spawn the consensus engine and sink the primary channel.
     let (tx_waiter, rx_waiter) = channel(1);
@@ -160,14 +162,15 @@ async fn dead_node() {
         }
     });
 
-    // We should commit 3 leaders (rounds 2, 4, and 6).
-    for i in 1..=15 {
+    // We should commit 4 leaders (rounds 2, 4, 6, and 8).
+    for i in 1..=27 {
+        println!("{}", i);
         let certificate = rx_output.recv().await.unwrap();
         let expected = ((i - 1) / keys.len() as u64) + 1;
         assert_eq!(certificate.round(), expected);
     }
     let certificate = rx_output.recv().await.unwrap();
-    assert_eq!(certificate.round(), 6);
+    assert_eq!(certificate.round(), 8);
 }
 
 // Run for 6 dag rounds. The leaders of round 2 does not have enough support, but the leader of

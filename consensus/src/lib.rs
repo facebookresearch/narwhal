@@ -116,11 +116,20 @@ impl Consensus {
                 .or_insert_with(HashMap::new)
                 .insert(certificate.origin(), (certificate.digest(), certificate));
 
+
+            /*
+
+
+            TODO: Is there an offset between the rounds (leader round) of consensus & proposer?
+
+
+            */
+
             // Try to order the dag to commit. Start from the previous round and check if it is a leader round.
             let r = round - 1;
 
             // We only elect leaders for even round numbers.
-            if r % 2 != 0 || r < 4 {
+            if r % 2 != 0 || r < 2 {
                 continue;
             }
 
