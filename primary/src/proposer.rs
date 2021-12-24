@@ -107,22 +107,19 @@ impl Proposer {
     }
 
     /// Update the last leader.
-    fn update_last_leader(&mut self) {
-        let leader_round = self.round - 1;
-        let leader_name = self.committee.leader(leader_round as usize);
+    fn update_leader(&mut self) -> bool {
+        let leader_name = self.committee.leader(self.round as usize);
         self.last_leader = self
             .last_parents
             .iter()
             .find(|x| x.origin() == leader_name)
             .cloned();
-    }
 
-    /// Check if the last parent contains the leader.
-    fn got_leader(&self) -> bool {
-        self.last_leader
-            .as_ref()
-            .map(|x| debug!("Got leader {}", x.origin()))
-            .is_some()
+        if let Some(leader) = self.last_leader.as_ref() {
+            debug!("Got leader {} for round {}", leader.origin(), self.round);
+        }
+
+        self.last_leader.is_some()
     }
 
     /// Check whether if we have (i) 2f+1 votes for the leader, (ii) f+1 nodes not voting for the leader,
@@ -147,7 +144,7 @@ impl Proposer {
         let mut enough_votes = votes_for_leader >= self.committee.quorum_threshold();
         if log_enabled!(log::Level::Debug) && enough_votes {
             if let Some(leader) = self.last_leader.as_ref() {
-                debug!("Got enough support for leader {}", leader.origin());
+                debug!("Got enough support for leader {} at round {}", leader.origin(), self.round);
             }
         }
         enough_votes |= no_votes >= self.committee.validity_threshold();
@@ -171,10 +168,6 @@ impl Proposer {
             let enough_parents = !self.last_parents.is_empty();
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
-
-            if timer_expired {
-                warn!("Timer expired for round {}", self.round);
-            }
 
             if (timer_expired || (enough_digests && advance)) && enough_parents {
                 // Advance to the next round.
@@ -213,14 +206,8 @@ impl Proposer {
                     // Check whether we can advance to the next round. Note that if we timeout,
                     // we ignore this check and advance anyway.
                     advance = match self.round % 2 {
-                        0 => self.enough_votes(),
-                        _ => {
-                            // Update the latest leader.
-                            self.update_last_leader();
-
-                            // Check whether we got a leader. If we do, we are ready to vote for it.
-                            self.got_leader()
-                        }
+                        0 => self.update_leader(),
+                        _ => self.enough_votes(),
                     }
                 }
                 Some((digest, worker_id)) = self.rx_workers.recv() => {
@@ -228,7 +215,7 @@ impl Proposer {
                     self.digests.push((digest, worker_id));
                 }
                 () = &mut timer => {
-                    // Nothing to do.
+                    warn!("Timer expired for round {}", self.round);
                 }
             }
         }
