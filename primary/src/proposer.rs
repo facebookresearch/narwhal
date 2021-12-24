@@ -173,11 +173,11 @@ impl Proposer {
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
 
-            if timer_expired {
-                warn!("Timer expired for round {}", self.round);
-            }
-
             if (timer_expired || (enough_digests && advance)) && enough_parents {
+                if timer_expired {
+                    warn!("Timer expired for round {}", self.round);
+                }
+                
                 // Advance to the next round.
                 self.round += 1;
                 debug!("Dag moved to round {}", self.round);
