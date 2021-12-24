@@ -172,8 +172,8 @@ async fn dead_node() {
     assert_eq!(certificate.round(), 8);
 }
 
-// Run for 6 dag rounds. The leaders of round 2 does not have enough support, but the leader of
-// round 4 does. The leader of rounds 2 and 4 should thus be committed upon entering round 6.
+// Run for 5 dag rounds. The leaders of round 2 does not have enough support, but the leader of
+// round 4 does. The leader of rounds 2 and 4 should thus be committed.
 #[tokio::test]
 async fn not_enough_support() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
@@ -268,8 +268,8 @@ async fn not_enough_support() {
     assert_eq!(certificate.round(), 4);
 }
 
-// Run for 6 dag rounds. Node 0 (the leader of round 2) is missing for rounds 1 and 2,
-// and reapers from round 3.
+// Run for 7 dag rounds. Node 0 (the leader of round 2) is missing for rounds 1 and 2,
+// and reappears from round 3.
 #[tokio::test]
 async fn missing_leader() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
@@ -287,12 +287,14 @@ async fn missing_leader() {
     let (out, parents) = make_certificates(1, 2, &genesis, &nodes);
     certificates.extend(out);
 
-    // Add back the leader for rounds 3, 4, 5 and 6.
-    let (out, parents) = make_certificates(3, 6, &parents, &keys);
+    // Add back the leader for rounds 3 and 4.
+    let (out, parents) = make_certificates(3, 4, &parents, &keys);
     certificates.extend(out);
 
-    // Add a certificate of round 7 to commit the leader of round 4.
-    let (_, certificate) = mock_certificate(keys[0], 7, parents.clone());
+    // Add f+1 certificates of round 5 to commit the leader of round 4.
+    let (_, certificate) = mock_certificate(keys[0], 5, parents.clone());
+    certificates.push_back(certificate);
+    let (_, certificate) = mock_certificate(keys[1], 5, parents.clone());
     certificates.push_back(certificate);
 
     // Spawn the consensus engine and sink the primary channel.

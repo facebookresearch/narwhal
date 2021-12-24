@@ -144,7 +144,11 @@ impl Proposer {
         let mut enough_votes = votes_for_leader >= self.committee.quorum_threshold();
         if log_enabled!(log::Level::Debug) && enough_votes {
             if let Some(leader) = self.last_leader.as_ref() {
-                debug!("Got enough support for leader {} at round {}", leader.origin(), self.round);
+                debug!(
+                    "Got enough support for leader {} at round {}",
+                    leader.origin(),
+                    self.round
+                );
             }
         }
         enough_votes |= no_votes >= self.committee.validity_threshold();

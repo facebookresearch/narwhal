@@ -203,12 +203,12 @@ impl Consensus {
         // At this stage, we are guaranteed to have 2f+1 certificates from round r (which is enough to
         // compute the coin). We currently just use round-robin.
         #[cfg(test)]
-        let coin = 0;
+        let seed = 0;
         #[cfg(not(test))]
-        let coin = round;
+        let seed = round;
 
         // Elect the leader.
-        let leader = self.committee.leader(coin as usize);
+        let leader = self.committee.leader(seed as usize);
 
         // Return its certificate and the certificate's digest.
         dag.get(&round).map(|x| x.get(&leader)).flatten()
