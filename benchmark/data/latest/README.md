@@ -41,7 +41,7 @@ We set the following `node_params` in our [fabfile](https://github.com/asonnino/
 ```python
 node_params = {
     'header_size': 1_000,  # bytes
-    'max_header_delay': 200,  # ms
+    'max_header_delay': 5_000,  # ms
     'gc_depth': 50,  # rounds
     'sync_retry_delay': 10_000,  # ms
     'sync_retry_nodes': 3,  # number of nodes
@@ -49,4 +49,3 @@ node_params = {
     'max_batch_delay': 200  # ms
 }
 ```
-For [Bullshark](https://github.com/asonnino/narwhal/tree/bullshark), the `max_header_delay` parameter is set to `5_000` ms.
