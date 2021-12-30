@@ -177,7 +177,7 @@ impl Proposer {
                 if timer_expired {
                     warn!("Timer expired for round {}", self.round);
                 }
-                
+
                 // Advance to the next round.
                 self.round += 1;
                 debug!("Dag moved to round {}", self.round);
