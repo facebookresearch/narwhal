@@ -49,4 +49,4 @@ node_params = {
     'max_batch_delay': 200  # ms
 }
 ```
-
+For [Bullshark](https://github.com/asonnino/narwhal/tree/bullshark), the `max_header_delay` parameter is set to `5_000` ms.
