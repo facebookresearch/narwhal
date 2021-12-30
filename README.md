@@ -1,4 +1,4 @@
-# Narwhal and Tusk
+# Bullshark
 
 [![build status](https://img.shields.io/github/workflow/status/asonnino/narwhal/Rust/bullshark?style=flat-square&logo=github)](https://github.com/asonnino/narwhal/actions)
 [![rustc](https://img.shields.io/badge/rustc-1.51+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
