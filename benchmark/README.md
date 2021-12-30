@@ -28,7 +28,7 @@ The nodes parameters determine the configuration for the primaries and workers:
 ```python
 node_params = {
     'header_size': 1_000,
-    'max_header_delay': 100,
+    'max_header_delay': 5_000,
     'gc_depth': 50,
     'sync_retry_delay': 10_000,
     'sync_retry_nodes': 3,
