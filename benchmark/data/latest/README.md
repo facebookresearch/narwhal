@@ -1,6 +1,6 @@
 # Experimental Data
 
-This folder contains some raw data and plots obtained running a geo-replicated benchmark on AWS as explained in the [benchmark's readme file](https://github.com/asonnino/narwhal/tree/master/benchmark#readme). The results are taken running the code at commit `4a11312f1f0056f84d37e93bf6e759d2fb1e279b`.
+This folder contains some raw data and plots obtained running a geo-replicated benchmark on AWS as explained in the [benchmark's readme file](https://github.com/asonnino/narwhal/tree/master/benchmark#readme). The results are taken running the code at commit `4a2c3dc854ee0b9bbf5daf80de71c21b1328c2c1`.
 
 ### Filename format
 The filename format of raw data is the following:
