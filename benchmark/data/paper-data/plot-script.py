@@ -224,7 +224,7 @@ class Ploter:
         plt.figure(figsize=(width, height))
         self.reset_markers()
         self.reset_linestyles()
-        self.colors = cycle(['tab:green', 'tab:blue', 'tab:orange', 'tab:red'])
+        self.colors = cycle(['tab:orange', 'tab:green', 'tab:blue', 'tab:red'])
 
     def reset_markers(self):
         self.markers = cycle(['o', 'v', 's', 'd'])
@@ -320,7 +320,7 @@ class Ploter:
 
     @staticmethod
     def legend_name(system):
-        return system.capitalize().replace('hs', 'HS')
+        return system.replace('batched-hs', 'hotstuff').capitalize()
 
     def plot_latency(self, system, faults, nodes, workers, tx_size):
         assert isinstance(system, str)
@@ -421,7 +421,7 @@ class Ploter:
 
 if __name__ == '__main__':
     max_latencies = [3_000, 5_000]  # For TPS graphs.
-    all_systems = ['tusk', 'bullshark', 'batched-hs']
+    all_systems = ['batched-hs', 'tusk', 'bullshark']
 
     # Parse the results.
     for system in all_systems:
