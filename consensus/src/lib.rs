@@ -116,18 +116,16 @@ impl Consensus {
                 .or_insert_with(HashMap::new)
                 .insert(certificate.origin(), (certificate.digest(), certificate));
 
-            // Try to order the dag to commit. Start from the highest round for which we have at least
-            // 2f+1 certificates. This is because we need them to reveal the common coin.
+            // Try to order the dag to commit. Start from the previous round and check if it is a leader round.
             let r = round - 1;
 
             // We only elect leaders for even round numbers.
-            if r % 2 != 0 || r < 4 {
+            if r % 2 != 0 || r < 2 {
                 continue;
             }
 
-            // Get the certificate's digest of the leader of round r-2. If we already ordered this leader,
-            // there is nothing to do.
-            let leader_round = r - 2;
+            // Get the certificate's digest of the leader. If we already ordered this leader, there is nothing to do.
+            let leader_round = r;
             if leader_round <= state.last_committed_round {
                 continue;
             }
@@ -139,10 +137,10 @@ impl Consensus {
             // Check if the leader has f+1 support from its children (ie. round r-1).
             let stake: Stake = state
                 .dag
-                .get(&(r - 1))
+                .get(&round)
                 .expect("We should have the whole history by now")
                 .values()
-                .filter(|(_, x)| x.header.parents.contains(&leader_digest))
+                .filter(|(_, x)| x.header.parents.contains(leader_digest))
                 .map(|(_, x)| self.committee.stake(&x.origin()))
                 .sum();
 
@@ -205,14 +203,12 @@ impl Consensus {
         // At this stage, we are guaranteed to have 2f+1 certificates from round r (which is enough to
         // compute the coin). We currently just use round-robin.
         #[cfg(test)]
-        let coin = 0;
+        let seed = 0;
         #[cfg(not(test))]
-        let coin = round;
+        let seed = round;
 
         // Elect the leader.
-        let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
-        keys.sort();
-        let leader = keys[coin as usize % self.committee.size()];
+        let leader = self.committee.leader(seed as usize);
 
         // Return its certificate and the certificate's digest.
         dag.get(&round).map(|x| x.get(&leader)).flatten()

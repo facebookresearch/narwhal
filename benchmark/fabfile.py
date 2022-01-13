@@ -21,8 +21,8 @@ def local(ctx, debug=True):
         'duration': 20,
     }
     node_params = {
-        'header_size': 1_000,  # bytes
-        'max_header_delay': 200,  # ms
+        'header_size': 50,  # bytes
+        'max_header_delay': 1_000,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 3,  # number of nodes
@@ -37,7 +37,7 @@ def local(ctx, debug=True):
 
 
 @task
-def create(ctx, nodes=2):
+def create(ctx, nodes=10):
     ''' Create a testbed'''
     try:
         InstanceManager.make().create_instances(nodes)
@@ -94,18 +94,18 @@ def install(ctx):
 def remote(ctx, debug=False):
     ''' Run benchmarks on AWS '''
     bench_params = {
-        'faults': 3,
-        'nodes': [10],
+        'faults': 0,
+        'nodes': [10, 20],
         'workers': 1,
         'collocate': True,
-        'rate': [10_000, 110_000],
+        'rate': [10_000, 50_000],
         'tx_size': 512,
         'duration': 300,
         'runs': 2,
     }
     node_params = {
-        'header_size': 1_000,  # bytes
-        'max_header_delay': 200,  # ms
+        'header_size': 50,  # bytes
+        'max_header_delay': 5_000,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 3,  # number of nodes
@@ -127,7 +127,7 @@ def plot(ctx):
         'workers': [1],
         'collocate': True,
         'tx_size': 512,
-        'max_latency': [3_500, 4_500]
+        'max_latency': [2_500, 4_500]
     }
     try:
         Ploter.plot(plot_params)

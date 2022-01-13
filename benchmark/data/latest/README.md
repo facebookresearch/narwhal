@@ -1,6 +1,6 @@
 # Experimental Data
 
-This folder contains some raw data and plots obtained running a geo-replicated benchmark on AWS as explained in the [benchmark's readme file](https://github.com/asonnino/narwhal/tree/master/benchmark#readme). The results are taken running the code tagged as [v0.2.0](https://github.com/asonnino/narwhal/tree/v0.2.0).
+This folder contains some raw data and plots obtained running a geo-replicated benchmark on AWS as explained in the [benchmark's readme file](https://github.com/asonnino/narwhal/tree/master/benchmark#readme). The results are taken running the code at commit `4a2c3dc854ee0b9bbf5daf80de71c21b1328c2c1`.
 
 ### Filename format
 The filename format of raw data is the following:
@@ -41,7 +41,7 @@ We set the following `node_params` in our [fabfile](https://github.com/asonnino/
 ```python
 node_params = {
     'header_size': 1_000,  # bytes
-    'max_header_delay': 200,  # ms
+    'max_header_delay': 5_000,  # ms
     'gc_depth': 50,  # rounds
     'sync_retry_delay': 10_000,  # ms
     'sync_retry_nodes': 3,  # number of nodes
@@ -49,4 +49,3 @@ node_params = {
     'max_batch_delay': 200  # ms
 }
 ```
-

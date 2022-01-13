@@ -1,0 +1,60 @@
+
+-----------------------------------------
+ SUMMARY:
+-----------------------------------------
+ + CONFIG:
+ Faults: 3 node(s)
+ Committee size: 10 node(s)
+ Worker(s) per node: 1 worker(s)
+ Collocate primary and workers: True
+ Input rate: 77,000 tx/s
+ Transaction size: 512 B
+ Execution time: 301 s
+
+ Header size: 50 B
+ Max header delay: 5,000 ms
+ GC depth: 50 round(s)
+ Sync retry delay: 10,000 ms
+ Sync retry nodes: 3 node(s)
+ batch size: 500,000 B
+ Max batch delay: 200 ms
+
+ + RESULTS:
+ Consensus TPS: 72,926 tx/s
+ Consensus BPS: 37,338,088 B/s
+ Consensus latency: 3,480 ms
+
+ End-to-end TPS: 72,218 tx/s
+ End-to-end BPS: 36,975,546 B/s
+ End-to-end latency: 13,532 ms
+-----------------------------------------
+
+-----------------------------------------
+ SUMMARY:
+-----------------------------------------
+ + CONFIG:
+ Faults: 3 node(s)
+ Committee size: 10 node(s)
+ Worker(s) per node: 1 worker(s)
+ Collocate primary and workers: True
+ Input rate: 77,000 tx/s
+ Transaction size: 512 B
+ Execution time: 294 s
+
+ Header size: 50 B
+ Max header delay: 5,000 ms
+ GC depth: 50 round(s)
+ Sync retry delay: 10,000 ms
+ Sync retry nodes: 3 node(s)
+ batch size: 500,000 B
+ Max batch delay: 200 ms
+
+ + RESULTS:
+ Consensus TPS: 73,499 tx/s
+ Consensus BPS: 37,631,248 B/s
+ Consensus latency: 3,538 ms
+
+ End-to-end TPS: 72,914 tx/s
+ End-to-end BPS: 37,331,996 B/s
+ End-to-end latency: 12,747 ms
+-----------------------------------------
