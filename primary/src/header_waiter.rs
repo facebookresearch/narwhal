@@ -59,8 +59,8 @@ pub struct HeaderWaiter {
     /// Keeps the digests of the all tx batches for which we sent a sync request,
     /// similarly to `header_requests`.
     batch_requests: HashMap<Digest, Round>,
-    /// List of digests (either certificates, headers or tx batch) that are waiting
-    /// to be processed. Their processing will resume when we get all their dependencies.
+    /// List of digests (headers or tx batch) that are waiting to be processed.
+    /// Their processing will resume when we get all their dependencies.
     pending: HashMap<Digest, (Round, Sender<()>)>,
 }
 
@@ -230,6 +230,7 @@ impl HeaderWaiter {
                             let _ = self.batch_requests.remove(x);
                         }
                         for x in &header.parents {
+                            debug!("Deleting {} from sync obligations: We got it", x);
                             let _ = self.parent_requests.remove(x);
                         }
                         self.tx_core.send(header).await.expect("Failed to send header");
@@ -239,7 +240,7 @@ impl HeaderWaiter {
                     },
                     Err(e) => {
                         error!("{}", e);
-                        panic!("Storage failure: killing node.");
+                        panic!("Storage failure: killing node");
                     }
                 },
 
@@ -255,6 +256,19 @@ impl HeaderWaiter {
                     let mut retry = Vec::new();
                     for (digest, (_, timestamp)) in &self.parent_requests {
                         if timestamp + (self.sync_retry_delay as u128) < now {
+                            /*
+                            if self
+                                .store
+                                .read(digest.to_vec())
+                                .await
+                                .expect("Failed to read from store")
+                                .is_some()
+                            {
+                                self.parent_requests.remove(digest);
+                                continue;
+                            }
+                            */
+
                             debug!("Requesting sync for certificate {} (retry)", digest);
                             retry.push(digest.clone());
                         }

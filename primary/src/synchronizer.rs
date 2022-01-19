@@ -2,6 +2,7 @@
 use crate::error::DagResult;
 use crate::header_waiter::WaiterMessage;
 use crate::messages::{Certificate, Header};
+use crate::primary::Round;
 use config::Committee;
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
@@ -115,6 +116,29 @@ impl Synchronizer {
             .await
             .expect("Failed to send sync parents request");
         Ok(Vec::new())
+    }
+
+    pub async fn get_weak_links(&mut self, header: &Header, gc_round: &Round) -> DagResult<bool> {
+        if let Some(metadata) = header.metadata.as_ref() {
+            let mut missing = Vec::new();
+            for (digest, round) in &metadata.virtual_parents {
+                if gc_round >= round || self.genesis.iter().any(|(x, _)| x == digest) {
+                    continue;
+                }
+                if self.store.read(digest.to_vec()).await?.is_none() {
+                    missing.push(digest.clone());
+                }
+            }
+            if missing.is_empty() {
+                return Ok(true);
+            }
+            self.tx_header_waiter
+                .send(WaiterMessage::SyncParents(missing, header.clone()))
+                .await
+                .expect("Failed to send sync parents request");
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     /// Check whether we have all the ancestors of the certificate. If we don't, send the certificate to

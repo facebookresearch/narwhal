@@ -147,6 +147,15 @@ impl Core {
             .or_insert_with(HashSet::new)
             .insert(header.id.clone());
 
+        // If the following condition is valid, it means we already garbage collected the parents. There is thus
+        // no points in trying to synchronize them or vote for the header. We just need to gather the payload.
+        if self.gc_round >= header.round {
+            if self.synchronizer.missing_payload(header).await? {
+                debug!("Downloading the payload of {}", header);
+            }
+            return Ok(());
+        }
+
         // Ensure we have the parents. If at least one parent is missing, the synchronizer returns an empty
         // vector; it will gather the missing parents (as well as all ancestors) from other nodes and then
         // reschedule processing of this header.
@@ -170,16 +179,26 @@ impl Core {
             DagError::HeaderRequiresQuorum(header.id.clone())
         );
 
+        // Check weak links. If they are too old, we don't try to synchronize them but we still need to
+        // get the payload.
+        if !self
+            .synchronizer
+            .get_weak_links(&header, &self.gc_round)
+            .await?
+        {
+            debug!(
+                "Processing of {} suspended: missing weak-link(s)",
+                header.id
+            );
+            return Ok(());
+        }
+
         // Ensure we have the payload. If we don't, the synchronizer will ask our workers to get it, and then
         // reschedule processing of this header once we have it.
         if self.synchronizer.missing_payload(header).await? {
             debug!("Processing of {} suspended: missing payload", header);
             return Ok(());
         }
-
-        // Store the header.
-        let bytes = bincode::serialize(header).expect("Failed to serialize header");
-        self.store.write(header.id.to_vec(), bytes).await;
 
         // Check if we can vote for this header.
         if self
@@ -250,7 +269,6 @@ impl Core {
     #[async_recursion]
     async fn process_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
         debug!("Processing {:?}", certificate);
-
         // Process the header embedded in the certificate if we haven't already voted for it (if we already
         // voted, it means we already processed it). Since this header got certified, we are sure that all
         // the data it refers to (ie. its payload and its parents) are available. We can thus continue the
@@ -264,9 +282,11 @@ impl Core {
             self.process_header(&certificate.header).await?;
         }
 
-        // Ensure we have all the ancestors of this certificate yet. If we don't, the synchronizer will gather
-        // them and trigger re-processing of this certificate.
-        if !self.synchronizer.deliver_certificate(&certificate).await? {
+        // Ensure we have all the ancestors of this certificate yet (if we didn't already garbage collect them).
+        // If we don't, the synchronizer will gather them and trigger re-processing of this certificate.
+        if certificate.round() > self.gc_round + 1
+            && !self.synchronizer.deliver_certificate(&certificate).await?
+        {
             debug!(
                 "Processing of {:?} suspended: missing ancestors",
                 certificate
@@ -283,7 +303,7 @@ impl Core {
             .certificates_aggregators
             .entry(certificate.round())
             .or_insert_with(|| Box::new(CertificatesAggregator::new()))
-            .append(certificate.clone(), &self.committee)?
+            .append(certificate.clone(), &self.committee)
         {
             // Send it to the `Proposer`.
             self.tx_proposer
@@ -304,10 +324,10 @@ impl Core {
     }
 
     fn sanitize_header(&mut self, header: &Header) -> DagResult<()> {
-        ensure!(
-            self.gc_round <= header.round,
-            DagError::TooOld(header.id.clone(), header.round)
-        );
+        //ensure!(
+        //    self.gc_round < header.round,
+        //    DagError::TooOld(header.id.clone(), header.round)
+        //);
 
         // Verify the header's signature.
         header.verify(&self.committee)?;
@@ -320,7 +340,7 @@ impl Core {
     fn sanitize_vote(&mut self, vote: &Vote) -> DagResult<()> {
         ensure!(
             self.current_header.round <= vote.round,
-            DagError::TooOld(vote.digest(), vote.round)
+            DagError::VoteTooOld(vote.digest(), vote.round)
         );
 
         // Ensure we receive a vote on the expected header.
@@ -336,10 +356,12 @@ impl Core {
     }
 
     fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
-        ensure!(
-            self.gc_round <= certificate.round(),
-            DagError::TooOld(certificate.digest(), certificate.round())
-        );
+        // TODO: Disabling this check is a hack. See TODO in certificate_waiter.
+
+        //ensure!(
+        //    self.gc_round < certificate.round(),
+        //    DagError::TooOld(certificate.digest(), certificate.round())
+        //);
 
         // Verify the certificate (and the embedded header).
         certificate.verify(&self.committee).map_err(DagError::from)
@@ -388,7 +410,7 @@ impl Core {
                 Some(header) = self.rx_proposer.recv() => self.process_own_header(header).await,
             };
             match result {
-                Ok(()) => (),
+                Ok(()) | Err(DagError::VoteTooOld(..)) => (),
                 Err(DagError::StoreError(e)) => {
                     error!("{}", e);
                     panic!("Storage failure: killing node.");
@@ -401,10 +423,10 @@ impl Core {
             let round = self.consensus_round.load(Ordering::Relaxed);
             if round > self.gc_depth {
                 let gc_round = round - self.gc_depth;
-                self.last_voted.retain(|k, _| k >= &gc_round);
-                self.processing.retain(|k, _| k >= &gc_round);
-                self.certificates_aggregators.retain(|k, _| k >= &gc_round);
-                self.cancel_handlers.retain(|k, _| k >= &gc_round);
+                self.last_voted.retain(|k, _| k > &gc_round);
+                self.processing.retain(|k, _| k > &gc_round);
+                self.certificates_aggregators.retain(|k, _| k > &gc_round);
+                self.cancel_handlers.retain(|k, _| k > &gc_round);
                 self.gc_round = gc_round;
             }
         }

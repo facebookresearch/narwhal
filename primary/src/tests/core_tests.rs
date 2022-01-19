@@ -28,7 +28,7 @@ async fn process_header() {
     // Create a new test store.
     let path = ".db_test_process_header";
     let _ = fs::remove_dir_all(path);
-    let mut store = Store::new(path).unwrap();
+    let store = Store::new(path).unwrap();
 
     // Make the vote we expect to receive.
     let expected = Vote::new(&header(), &name, &mut signature_service).await;
@@ -78,14 +78,6 @@ async fn process_header() {
         PrimaryMessage::Vote(x) => assert_eq!(x, expected),
         x => panic!("Unexpected message: {:?}", x),
     }
-
-    // Ensure the header is correctly stored.
-    let stored = store
-        .read(header().id.to_vec())
-        .await
-        .unwrap()
-        .map(|x| bincode::deserialize(&x).unwrap());
-    assert_eq!(stored, Some(header()));
 }
 
 #[tokio::test]

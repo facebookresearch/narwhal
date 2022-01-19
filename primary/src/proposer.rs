@@ -1,12 +1,14 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
+use crate::messages::Metadata;
 use crate::messages::{Certificate, Header};
 use crate::primary::Round;
 use config::{Committee, WorkerId};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
-use log::debug;
 #[cfg(feature = "benchmark")]
 use log::info;
+use log::{debug, log_enabled};
+use std::collections::VecDeque;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
@@ -31,6 +33,8 @@ pub struct Proposer {
     rx_workers: Receiver<(Digest, WorkerId)>,
     /// Sends newly created headers to the `Core`.
     tx_core: Sender<Header>,
+    /// The current consensus round.
+    rx_consensus: Receiver<Metadata>,
 
     /// The current round of the dag.
     round: Round,
@@ -40,6 +44,8 @@ pub struct Proposer {
     digests: Vec<(Digest, WorkerId)>,
     /// Keeps track of the size (in bytes) of batches' digests that we received so far.
     payload_size: usize,
+    /// The metadata to include in the next header.
+    metadata: VecDeque<Metadata>,
 }
 
 impl Proposer {
@@ -53,6 +59,7 @@ impl Proposer {
         rx_core: Receiver<(Vec<Digest>, Round)>,
         rx_workers: Receiver<(Digest, WorkerId)>,
         tx_core: Sender<Header>,
+        rx_consensus: Receiver<Metadata>,
     ) {
         let genesis = Certificate::genesis(committee)
             .iter()
@@ -68,10 +75,12 @@ impl Proposer {
                 rx_core,
                 rx_workers,
                 tx_core,
+                rx_consensus,
                 round: 1,
                 last_parents: genesis,
                 digests: Vec::with_capacity(2 * header_size),
                 payload_size: 0,
+                metadata: VecDeque::new(),
             }
             .run()
             .await;
@@ -85,10 +94,23 @@ impl Proposer {
             self.round,
             self.digests.drain(..).collect(),
             self.last_parents.drain(..).collect(),
+            self.metadata.pop_back(),
             &mut self.signature_service,
         )
         .await;
         debug!("Created {:?}", header);
+        if log_enabled!(log::Level::Debug) {
+            if let Some(metadata) = header.metadata.as_ref() {
+                debug!(
+                    "{} contains virtual round {}",
+                    header, metadata.virtual_round
+                );
+                debug!(
+                    "{} virtual parents are {:?}",
+                    header, metadata.virtual_parents
+                );
+            }
+        }
 
         #[cfg(feature = "benchmark")]
         for digest in header.payload.keys() {
@@ -119,7 +141,8 @@ impl Proposer {
             let enough_parents = !self.last_parents.is_empty();
             let enough_digests = self.payload_size >= self.header_size;
             let timer_expired = timer.is_elapsed();
-            if (timer_expired || enough_digests) && enough_parents {
+            let metadata_ready = !self.metadata.is_empty();
+            if (timer_expired || enough_digests) && enough_parents && metadata_ready {
                 // Make a new header.
                 self.make_header().await;
                 self.payload_size = 0;
@@ -145,6 +168,9 @@ impl Proposer {
                 Some((digest, worker_id)) = self.rx_workers.recv() => {
                     self.payload_size += digest.size();
                     self.digests.push((digest, worker_id));
+                }
+                Some(metadata) = self.rx_consensus.recv() => {
+                    self.metadata.push_front(metadata);
                 }
                 () = &mut timer => {
                     // Nothing to do.
