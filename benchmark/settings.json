@@ -7,7 +7,7 @@
     "repo": {
         "name": "narwhal",
         "url": "https://github.com/asonnino/narwhal",
-        "branch": "agile-dolphin"
+        "branch": "master"
     },
     "instances": {
         "type": "m5d.8xlarge",
