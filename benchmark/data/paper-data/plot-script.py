@@ -420,7 +420,7 @@ class Ploter:
 
 
 if __name__ == '__main__':
-    max_latencies = [3_000, 5_000]  # For TPS graphs.
+    max_latencies = [2_500, 5_000]  # For TPS graphs.
     all_systems = ['batched-hs', 'tusk', 'bullshark']
 
     # Parse the results.
@@ -441,6 +441,16 @@ if __name__ == '__main__':
         legend_anchor=(0.5, 1)
     )
 
+    # Plot 'Happy path' TPS graph.
+    ploter = Ploter()
+    for system in ['batched-hs', 'tusk', 'bullshark']:
+        ploter.plot_tps(system, [0], [10, 20, 50], [1], 512, max_latencies)
+    ploter.finalize(
+        'common-tps', 
+        legend_cols=1,
+        legend_loc='lower left',
+        legend_anchor=(0, 0.0)
+    )
 
     # Plot 'Dead nodes' graph.
     ploter = Ploter()
@@ -455,6 +465,7 @@ if __name__ == '__main__':
     )
 
     # Plot 'Scalability latency' graph.
+    '''
     ploter = Ploter(height=3.6)
     for system in ['tusk']:
         ploter.plot_latency(system, [0], [4], [4, 7, 10], 512)
@@ -465,6 +476,7 @@ if __name__ == '__main__':
     for system in ['tusk']:
         ploter.plot_tps(system, [0], [4], [1, 4, 7, 10], 512, max_latencies)
     ploter.finalize('scalability-tps', legend_cols=1)
+    '''
 
     # Remove aggregated log files.
     for system in all_systems:
