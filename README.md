@@ -4,7 +4,7 @@
 [![rustc](https://img.shields.io/badge/rustc-1.51+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![license](https://img.shields.io/badge/license-Apache-blue.svg?style=flat-square)](LICENSE)
 
-This repo provides an implementation of [Bullshark]() (paper coming soon). The codebase has been designed to be small, efficient, and easy to benchmark and modify. It has not been designed to run in production but uses real cryptography ([dalek](https://doc.dalek.rs/ed25519_dalek)), networking ([tokio](https://docs.rs/tokio)), and storage ([rocksdb](https://docs.rs/rocksdb)).
+This repo provides an implementation of [Bullshark](https://arxiv.org/pdf/2201.05677.pdf). The codebase has been designed to be small, efficient, and easy to benchmark and modify. It has not been designed to run in production but uses real cryptography ([dalek](https://doc.dalek.rs/ed25519_dalek)), networking ([tokio](https://docs.rs/tokio)), and storage ([rocksdb](https://docs.rs/rocksdb)).
 
 ## Quick Start
 The core protocols are written in Rust, but all benchmarking scripts are written in Python and run with [Fabric](http://www.fabfile.org/).
@@ -52,7 +52,7 @@ This command may take a long time the first time you run it (compiling rust code
 ```
 
 ## Next Steps
-The next step is to read the paper [Bullshark]() (paper coming soon). It is then recommended to have a look at the README files of the [worker](https://github.com/asonnino/narwhal/tree/bullshark/worker) and [primary](https://github.com/asonnino/narwhal/tree/bullshark/primary) crates. An additional resource to better understand the Bullshark consensus protocol is the paper [Narwhal and Tusk](https://arxiv.org/pdf/2105.11827.pdf) describing the main systems aspects behind this protocol. 
+The next step is to read the paper [Bullshark](https://arxiv.org/pdf/2201.05677.pdf). It is then recommended to have a look at the README files of the [worker](https://github.com/asonnino/narwhal/tree/bullshark/worker) and [primary](https://github.com/asonnino/narwhal/tree/bullshark/primary) crates. An additional resource to better understand the Bullshark consensus protocol is the paper [Narwhal and Tusk](https://arxiv.org/pdf/2105.11827.pdf) describing the main systems aspects behind this protocol. 
 
 The README file of the [benchmark folder](https://github.com/asonnino/narwhal/tree/bullshark/benchmark) explains how to benchmark the codebase and read benchmarks' results. It also provides a step-by-step tutorial to run benchmarks on [Amazon Web Services (AWS)](https://aws.amazon.com) accross multiple data centers (WAN).
 
