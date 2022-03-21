@@ -1,6 +1,5 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use config::{Committee, Stake};
-use core::panic;
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
 use log::{debug, info, log_enabled, warn};
@@ -127,79 +126,30 @@ impl Consensus {
                 (certificate.digest(), certificate.clone()),
             );
 
-            // Try to order the dag to commit. Start from the previous round and check if it is a leader round.
-            /*let r = round - 1;
-
-            // We only elect leaders for even round numbers.
-            if r % 2 != 0 || r < 2 {
-                continue;
-            }
-
-            // Get the certificate's digest of the leader. If we already ordered this leader, there is nothing to do.
-            let leader_round = r;
-            if leader_round <= state.last_committed_round {
-                continue;
-            }
-            let (leader_digest, leader) = match self.leader(leader_round, &state.dag) {
-                Some(x) => x,
-                None => continue,
-            };
-
-            // Check if the leader has f+1 support from its children (ie. round r-1).
-            let stake: Stake = state
-                .dag
-                .get(&round)
-                .expect("We should have the whole history by now")
-                .values()
-                .filter(|(_, x)| x.header.parents.contains(leader_digest))
-                .map(|(_, x)| self.committee.stake(&x.origin()))
-                .sum();
-
-
-            // If it is the case, we can commit the leader. But first, we need to recursively go back to
-            // the last committed leader, and commit all preceding leaders in the right order. Committing
-            // a leader block means committing all its dependencies.
-            if stake < self.committee.validity_threshold() {
-                debug!("Leader {:?} does not have enough support", leader);
-                continue;
-            }
-
-            // Get an ordered list of past leaders that are linked to the current leader.
-            debug!("Leader {:?} has enough support", leader);
-            let mut sequence = Vec::new();
-            for leader in self.order_leaders(leader, &state).iter().rev() {
-                // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
-                for x in self.order_dag(leader, &state) {
-                    // Update and clean up internal state.
-                    state.update(&x, self.gc_depth);
-
-                    // Add the certificate to the sequence.
-                    sequence.push(x);
-                }
-            }*/
-
+            // Update the mode of the validator and see if a leader could be committed
             let leader = match self.update_validator_mode(&certificate, &mut state) {
                 Some(x) => x.clone(),
                 None => continue,
             };
 
-            let r = round - 1;
-
             // Elect leaders every even round
-            if r % 2 != 0 || r < 2 {
+            if round % 2 != 0 || round < 2 {
                 continue;
             }
+
+            // Look at the previous round for votes
+            let r = round - 1;
 
             // Get the certificate's digest of the leader. If we already ordered this leader, there is nothing to do.
             let leader_round = r - 1;
 
+            // If we already committed the leader then we are done
             if leader_round <= state.last_committed_round {
                 continue;
             }
 
             // Get an ordered list of past leaders that are linked to the current leader.
             debug!("Leader {:?} has enough support", leader);
-            //println!("Committed leader {}", &leader.origin());
             let mut sequence = Vec::new();
             for leader in self.order_wave_leaders(&leader, &mut state).iter().rev() {
                 // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
@@ -248,9 +198,14 @@ impl Consensus {
         certificate: &Certificate,
         state: &mut State,
     ) -> Option<Certificate> {
-        let ss_wave = ((certificate.round() as f64) / 2.0).ceil() as u64;
-        let fb_wave = ((certificate.round() as f64) / 4.0).ceil() as u64;
-        //println!("fbwave {}", fb_wave);
+        // Waves and rounds are zero-indexed
+        let ss_wave = certificate.round() / 2;
+        let fb_wave = certificate.round() / 4;
+
+        // Starts from ss_wave = 1
+        if ss_wave == 0 {
+            return None;
+        }
 
         // If the mode of a certificate is already determined to be steady state then return
         if state
@@ -259,7 +214,6 @@ impl Consensus {
             .or_insert(BTreeSet::new())
             .contains(&certificate.origin())
         {
-            //println!("In the steady state {}", &certificate.origin());
             return None;
         }
 
@@ -270,8 +224,6 @@ impl Consensus {
             .or_insert(BTreeSet::new())
             .contains(&certificate.origin())
         {
-            //println!("In the fallback {}", &certificate.origin());
-
             return None;
         }
 
@@ -294,12 +246,12 @@ impl Consensus {
         }
 
         // If the certificate was in the previous fallback wave and there was a commit, then it is
-        // in the fallback
-        let fb_leader = self.try_fallback_commit(&certificate, max(fb_wave - 1, 1), state);
+        // in the current steady state wave
+        let fb_leader = self.try_fallback_commit(&certificate, fb_wave - 1, state);
 
         if state
             .fb_validator_sets
-            .entry(max(fb_wave - 1, 1))
+            .entry(fb_wave - 1)
             .or_insert(BTreeSet::new())
             .contains(&certificate.origin())
             && fb_leader.is_some()
@@ -318,7 +270,6 @@ impl Consensus {
             .entry(fb_wave)
             .or_insert(BTreeSet::new())
             .insert(certificate.origin());
-        //println!("fb_size round {} wave {} size {}", certificate.round(), fb_wave, state.fb_validator_sets.entry(fb_wave).or_insert(BTreeSet::new()).len());
 
         return None;
     }
@@ -333,8 +284,8 @@ impl Consensus {
         let dag = &state.dag;
 
         // Get the steady state leader of the current ss_wave
-        //println!("sswave {}", ss_wave);
-        let ss_leader_round = 2 * ss_wave - 1;
+        let ss_leader_round = 2 * ss_wave;
+
         let (_, leader) = match self.leader(ss_leader_round, &state.dag) {
             Some(x) => x,
             None => return None,
@@ -355,7 +306,7 @@ impl Consensus {
             .filter(|(_, x)| ss_sets.contains(&x.origin()))
             .map(|(_, x)| self.committee.stake(&x.origin()))
             .sum();
-        //println!("ss stake {} round {} sswave {} size {}", stake, certificate.round(), ss_wave, ss_sets.len());
+
         // Commit if there is at least 2f+1 steady state votes
         if stake >= self.committee.quorum_threshold() {
             return Some(leader.clone());
@@ -373,7 +324,8 @@ impl Consensus {
         let dag = &state.dag;
 
         // Get the current fallback leader of the current fb_wave
-        let fb_leader_round = 4 * fb_wave - 3;
+        let fb_leader_round = 4 * fb_wave;
+
         let (_, leader) = match self.fb_leader(fb_leader_round, &state.dag) {
             Some(x) => x,
             None => return None,
@@ -383,7 +335,6 @@ impl Consensus {
             .fb_validator_sets
             .entry(fb_wave)
             .or_insert(BTreeSet::new());
-        //println!("commit round {} fbwave {} size {}", certificate.round(), fb_wave, fb_sets.len());
 
         // Find the potential votes of certificates in fallback mode
         let stake: Stake = state
@@ -396,7 +347,6 @@ impl Consensus {
             .map(|(_, x)| self.committee.stake(&x.origin()))
             .sum();
 
-        //println!("fb stake {}", stake);
         // Commit if there is at least 2f+1 fallback votes
         if stake >= self.committee.quorum_threshold() {
             return Some(leader.clone());
@@ -446,12 +396,12 @@ impl Consensus {
         let mut leader = leader;
         let dag = &state.dag;
 
-        for r in (state.last_committed_round + 2..leader.round())
+        for r in (state.last_committed_round + 2..leader.round() - 1)
             .rev()
             .step_by(2)
         {
             // Get the current steady state wave number
-            let wave = ((r as f64) / 2.0).ceil() as u64;
+            let wave = r / 2;
 
             let ss_sets = state
                 .ss_validator_sets
@@ -466,7 +416,7 @@ impl Consensus {
 
             let ss_stake: Stake = state
                 .dag
-                .get(&(2 * wave))
+                .get(&(2 * wave + 1))
                 .expect("Should have previous round certificates")
                 .values()
                 .filter(|(d, x)| {
@@ -482,7 +432,8 @@ impl Consensus {
                 .entry(wave / 2)
                 .or_insert(BTreeSet::new());
 
-            if wave % 2 == 0 {
+            // If an odd steady state wave then check the fallback votes
+            if wave % 2 != 0 {
                 // Get the certificate proposed by the previous leader.
                 let (_, prev_fb_leader) = match self.fb_leader(r - 2, &state.dag) {
                     Some(x) => x,
@@ -491,7 +442,7 @@ impl Consensus {
 
                 fb_stake = state
                     .dag
-                    .get(&(2 * wave))
+                    .get(&(2 * wave + 1))
                     .expect("Should have previous round certificates")
                     .values()
                     .filter(|(d, x)| {
@@ -501,6 +452,7 @@ impl Consensus {
                     .map(|(_, x)| self.committee.stake(&x.origin()))
                     .sum();
 
+                // If f+1 fallback votes and at most f steady state votes then fallback commit
                 if ss_stake < self.committee.validity_threshold()
                     && fb_stake >= self.committee.validity_threshold()
                 {
@@ -511,34 +463,12 @@ impl Consensus {
                 fb_stake = 0;
             }
 
+            // If f+1 steady state votes and at most f fallback votes then steady state commit
             if ss_stake >= self.committee.validity_threshold()
                 && fb_stake < self.committee.validity_threshold()
             {
                 to_commit.push(prev_ss_leader.clone());
                 leader = prev_ss_leader;
-            }
-        }
-        to_commit
-    }
-
-    /// Order the past leaders that we didn't already commit.
-    fn order_leaders(&self, leader: &Certificate, state: &State) -> Vec<Certificate> {
-        let mut to_commit = vec![leader.clone()];
-        let mut leader = leader;
-        for r in (state.last_committed_round + 2..leader.round())
-            .rev()
-            .step_by(2)
-        {
-            // Get the certificate proposed by the previous leader.
-            let (_, prev_leader) = match self.leader(r, &state.dag) {
-                Some(x) => x,
-                None => continue,
-            };
-
-            // Check whether there is a path between the last two leaders.
-            if self.linked(leader, prev_leader, &state.dag) {
-                to_commit.push(prev_leader.clone());
-                leader = prev_leader;
             }
         }
         to_commit
