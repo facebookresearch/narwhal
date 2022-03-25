@@ -19,6 +19,9 @@ type Dag = HashMap<Round, HashMap<PublicKey, (Digest, Certificate)>>;
 struct State {
     /// The last committed round.
     last_committed_round: Round,
+    /// The last committed leader round.
+    last_leader_committed_round: Round,
+
     // Keeps the last committed round for each authority. This map is used to clean up the dag and
     // ensure we don't commit twice the same certificate.
     last_committed: HashMap<PublicKey, Round>,
@@ -45,6 +48,7 @@ impl State {
 
         Self {
             last_committed_round: 0,
+            last_leader_committed_round: 0,
             last_committed: genesis.iter().map(|(x, (_, y))| (*x, y.round())).collect(),
             dag: [(0, genesis)].iter().cloned().collect(),
             ss_validator_sets: ss_sets,
@@ -144,13 +148,14 @@ impl Consensus {
             let leader_round = r - 1;
 
             // If we already committed the leader then we are done
-            if leader_round <= state.last_committed_round {
+            if leader_round <= state.last_leader_committed_round {
                 continue;
             }
 
             // Get an ordered list of past leaders that are linked to the current leader.
             debug!("Leader {:?} has enough support", leader);
             let mut sequence = Vec::new();
+            state.last_leader_committed_round = leader_round;
             for leader in self.order_wave_leaders(&leader, &mut state).iter().rev() {
                 // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
                 for x in self.order_dag(leader, &state) {
@@ -243,6 +248,17 @@ impl Consensus {
                 .or_insert(BTreeSet::new())
                 .insert(certificate.origin());
             return ss_leader;
+        }
+
+        // If an odd steady state wave and there was not a commit then in the fallback
+        if ss_wave % 2 != 0 {
+            // Otherwise the certificate is in fallback mode
+            state
+                .fb_validator_sets
+                .entry(fb_wave)
+                .or_insert(BTreeSet::new())
+                .insert(certificate.origin());
+            return None;
         }
 
         // If the certificate was in the previous fallback wave and there was a commit, then it is

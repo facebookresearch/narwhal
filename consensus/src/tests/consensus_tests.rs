@@ -334,3 +334,240 @@ async fn missing_leader() {
     let certificate = rx_output.recv().await.unwrap();
     assert_eq!(certificate.round(), 4);
 }
+
+// Run for 11 dag rounds. Node 0 (the leader of round 2) is missing for rounds 1 and 2,
+// fallback leader is removed for rounds 4-7, but added back in rounds 8-11, and then is
+// finally committed
+#[tokio::test]
+async fn fallback_one() {
+    let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
+    keys.sort();
+
+    let genesis = Certificate::genesis(&mock_committee())
+        .iter()
+        .map(|x| x.digest())
+        .collect::<BTreeSet<_>>();
+
+    let mut certificates = VecDeque::new();
+
+    // Remove the leader for rounds 1-3.
+    let nodes: Vec<_> = keys.iter().cloned().skip(1).collect();
+    let (out, parents) = make_certificates(1, 3, &genesis, &nodes);
+    certificates.extend(out);
+
+    // Remove fallback the leader for rounds 4-7.
+    let mut nodes_one: Vec<_> = Vec::new();
+    nodes_one.push(keys[0]);
+    nodes_one.push(keys[2]);
+    nodes_one.push(keys[3]);
+    let (out, parents) = make_certificates(4, 7, &parents, &nodes_one);
+    certificates.extend(out);
+
+    // Add back fallback leader
+    let (out, parents) = make_certificates(8, 11, &parents, &keys);
+    certificates.extend(out);
+
+    // Add 1 certificate of round 12 to commit the fallback leader of round 8.
+    let (_, certificate) = mock_certificate(keys[0], 12, parents.clone());
+    certificates.push_back(certificate);
+
+    // Spawn the consensus engine and sink the primary channel.
+    let (tx_waiter, rx_waiter) = channel(1);
+    let (tx_primary, mut rx_primary) = channel(1);
+    let (tx_output, mut rx_output) = channel(1);
+    Consensus::spawn(
+        mock_committee(),
+        /* gc_depth */ 50,
+        rx_waiter,
+        tx_primary,
+        tx_output,
+    );
+    tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
+
+    // Feed all certificates to the consensus. We should only commit upon receiving the last
+    // certificate, so calls below should not block the task.
+    while let Some(certificate) = certificates.pop_front() {
+        tx_waiter.send(certificate).await.unwrap();
+    }
+
+    // Ensure the commit sequence is as expected.
+    for i in 0..21 {
+        let certificate = rx_output.recv().await.unwrap();
+        assert_eq!(certificate.round(), (i / 3) + 1);
+    }
+
+    let certificate = rx_output.recv().await.unwrap();
+    assert_eq!(certificate.round(), 8);
+}
+
+// Run for 13 dag rounds. Node 0 (the leader of round 2) is missing for rounds 1 and 2,
+// the fallback leader is removed for rounds 4-7, added back in rounds 8-11, and committed
+// in round 12. Then fully connected graph in rounds 12 and 13, causes a steady state commit
+// in round 14
+#[tokio::test]
+async fn fallback_two() {
+    let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
+    keys.sort();
+
+    let genesis = Certificate::genesis(&mock_committee())
+        .iter()
+        .map(|x| x.digest())
+        .collect::<BTreeSet<_>>();
+
+    let mut certificates = VecDeque::new();
+
+    // Remove the leader for rounds 1-3.
+    let nodes: Vec<_> = keys.iter().cloned().skip(1).collect();
+    let (out, parents) = make_certificates(1, 3, &genesis, &nodes);
+    certificates.extend(out);
+
+    // Remove fallback the leader for rounds 4-7.
+    let mut nodes_one: Vec<_> = Vec::new();
+    nodes_one.push(keys[0]);
+    nodes_one.push(keys[2]);
+    nodes_one.push(keys[3]);
+    let (out, parents) = make_certificates(4, 7, &parents, &nodes_one);
+    certificates.extend(out);
+
+    // Add back fallback leader
+    let (out, parents) = make_certificates(8, 11, &parents, &keys);
+    certificates.extend(out);
+
+    // Add 1 certificate of round 12 to commit the leader of round 8.
+    let (_, certificate) = mock_certificate(keys[0], 12, parents.clone());
+    certificates.push_back(certificate);
+
+    // Spawn the consensus engine and sink the primary channel.
+    let (tx_waiter, rx_waiter) = channel(1);
+    let (tx_primary, mut rx_primary) = channel(1);
+    let (tx_output, mut rx_output) = channel(1);
+    Consensus::spawn(
+        mock_committee(),
+        /* gc_depth */ 50,
+        rx_waiter,
+        tx_primary,
+        tx_output,
+    );
+    tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
+
+    // Feed all certificates to the consensus. We should only commit upon receiving the last
+    // certificate, so calls below should not block the task.
+    while let Some(certificate) = certificates.pop_front() {
+        tx_waiter.send(certificate).await.unwrap();
+    }
+
+    // Ensure the commit sequence is as expected.
+    for i in 0..21 {
+        let certificate = rx_output.recv().await.unwrap();
+        assert_eq!(certificate.round(), (i / 3) + 1);
+    }
+
+    let certificate = rx_output.recv().await.unwrap();
+    assert_eq!(certificate.round(), 8);
+
+    let (out, parents) = make_certificates(12, 12, &parents, &keys);
+    certificates.extend(out);
+
+    let (out, parents) = make_certificates(13, 13, &parents.clone(), &keys);
+    certificates.extend(out);
+
+    let (_, certificate) = mock_certificate(keys[0], 14, parents.clone());
+    certificates.push_back(certificate);
+
+    while let Some(certificate) = certificates.pop_front() {
+        tx_waiter.send(certificate).await.unwrap();
+    }
+
+    for i in 0..16 {
+        let certificate = rx_output.recv().await.unwrap();
+        assert_eq!(certificate.round(), (i / 4) + 8);
+    }
+
+    let certificate = rx_output.recv().await.unwrap();
+    assert_eq!(certificate.round(), 12);
+}
+
+// Run for 15 dag rounds. Node 0 (the leader of round 2) is missing for rounds 1 and 2,
+// fallback leader is removed rounds 4-7, and then added back in rounds 8-11, and is
+// committed in round 12. Steady state leader of round 12 is removed from rounds 12-15
+// and then a fallback commit occurs in round 16.
+#[tokio::test]
+async fn fallback_three() {
+    let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
+    keys.sort();
+
+    let genesis = Certificate::genesis(&mock_committee())
+        .iter()
+        .map(|x| x.digest())
+        .collect::<BTreeSet<_>>();
+
+    let mut certificates = VecDeque::new();
+
+    // Remove the leader for rounds 1-3.
+    let nodes: Vec<_> = keys.iter().cloned().skip(1).collect();
+    let (out, parents) = make_certificates(1, 3, &genesis, &nodes);
+    certificates.extend(out);
+
+    // Remove fallback the leader for rounds 4-7.
+    let mut nodes_one: Vec<_> = Vec::new();
+    nodes_one.push(keys[0]);
+    nodes_one.push(keys[2]);
+    nodes_one.push(keys[3]);
+    let (out, parents) = make_certificates(4, 7, &parents, &nodes_one);
+    certificates.extend(out);
+
+    // Add back fallback leader
+    let (out, parents) = make_certificates(8, 11, &parents, &keys);
+    certificates.extend(out);
+
+    // Add 1 certificate of round 12 to commit the leader of round 8.
+    let (_, certificate) = mock_certificate(keys[0], 12, parents.clone());
+    certificates.push_back(certificate);
+
+    // Spawn the consensus engine and sink the primary channel.
+    let (tx_waiter, rx_waiter) = channel(1);
+    let (tx_primary, mut rx_primary) = channel(1);
+    let (tx_output, mut rx_output) = channel(1);
+    Consensus::spawn(
+        mock_committee(),
+        /* gc_depth */ 50,
+        rx_waiter,
+        tx_primary,
+        tx_output,
+    );
+    tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
+
+    // Feed all certificates to the consensus. We should only commit upon receiving the last
+    // certificate, so calls below should not block the task.
+    while let Some(certificate) = certificates.pop_front() {
+        tx_waiter.send(certificate).await.unwrap();
+    }
+
+    // Ensure the commit sequence is as expected.
+    for i in 0..21 {
+        let certificate = rx_output.recv().await.unwrap();
+        assert_eq!(certificate.round(), (i / 3) + 1);
+    }
+
+    let certificate = rx_output.recv().await.unwrap();
+    assert_eq!(certificate.round(), 8);
+
+    let nodes: Vec<_> = keys.iter().cloned().skip(1).collect();
+    let (out, parents) = make_certificates(12, 15, &parents, &nodes.clone());
+    certificates.extend(out);
+
+    let (_, certificate) = mock_certificate(keys[1], 16, parents.clone());
+    certificates.push_back(certificate);
+
+    while let Some(certificate) = certificates.pop_front() {
+        tx_waiter.send(certificate).await.unwrap();
+    }
+
+    for i in 0..16 {
+        let certificate = rx_output.recv().await.unwrap();
+        assert_eq!(certificate.round(), (i / 4) + 8);
+    }
+
+    let certificate = rx_output.recv().await.unwrap();
+    assert_eq!(certificate.round(), 12);
+}
