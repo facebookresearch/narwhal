@@ -291,7 +291,7 @@ async fn missing_leader() {
     let (out, parents) = make_certificates(1, 2, &genesis, &nodes);
     certificates.extend(out);
 
-    // Add back the leader for rounds 3 and 4.
+    // Add back the leader for rounds 3-7
     let (out, parents) = make_certificates(3, 7, &parents, &keys);
     certificates.extend(out);
 
@@ -489,8 +489,8 @@ async fn fallback_two() {
 
 // Run for 15 dag rounds. Node 0 (the leader of round 2) is missing for rounds 1 and 2,
 // fallback leader is removed rounds 4-7, and then added back in rounds 8-11, and is
-// committed in round 12. Steady state leader of round 12 is removed from rounds 12-15
-// and then a fallback commit occurs in round 16.
+// committed in round 12. Steady state leader of round 12 is added back in rounds 12-13
+// and then a steady state commit occurs in round 14.
 #[tokio::test]
 async fn fallback_three() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
@@ -552,11 +552,11 @@ async fn fallback_three() {
     let certificate = rx_output.recv().await.unwrap();
     assert_eq!(certificate.round(), 8);
 
-    let nodes: Vec<_> = keys.iter().cloned().skip(1).collect();
-    let (out, parents) = make_certificates(12, 15, &parents, &nodes.clone());
+    //let nodes: Vec<_> = keys.iter().cloned().skip(1).collect();
+    let (out, parents) = make_certificates(12, 13, &parents, &keys);
     certificates.extend(out);
 
-    let (_, certificate) = mock_certificate(keys[1], 16, parents.clone());
+    let (_, certificate) = mock_certificate(keys[0], 14, parents.clone());
     certificates.push_back(certificate);
 
     while let Some(certificate) = certificates.pop_front() {
