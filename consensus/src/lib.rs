@@ -397,24 +397,26 @@ impl Consensus {
         while r > state.last_committed_round {
             let wave = r / 4;
 
-            let ss_sets = state
-                .ss_validator_sets
-                .entry(wave)
-                .or_insert(BTreeSet::new());
-
-            let fb_sets = state
-                .fb_validator_sets
-                .entry(wave)
-                .or_insert(BTreeSet::new());
+            let mut ss_copy = state.ss_validator_sets.clone();
 
             let ss_stake: Stake;
             let fb_stake: Stake;
 
-            if r % 4 == 2 {
-                let second_ss_leader_round = 4 * wave + 2;
+            if r % 4 == 0 {
+                let ss_sets = state
+                    .ss_validator_sets
+                    .entry(wave - 1)
+                    .or_insert(BTreeSet::new());
+
+                let fb_sets = state
+                    .fb_validator_sets
+                    .entry(wave - 1)
+                    .or_insert(BTreeSet::new());
+
+                let second_ss_leader_round = 4 * (wave - 1) + 2;
                 let second_ss_leader = self.leader(second_ss_leader_round, &state.dag);
 
-                let fb_leader_round = 4 * wave;
+                let fb_leader_round = 4 * (wave - 1);
                 let fb_leader = self.fb_leader(fb_leader_round, &state.dag);
 
                 ss_stake = match second_ss_leader {
@@ -474,7 +476,14 @@ impl Consensus {
                 }
             } else {
                 let first_ss_leader_round = 4 * wave;
+
+                if first_ss_leader_round <= 0 {
+                    break;
+                }
+
                 let first_ss_leader = self.leader(first_ss_leader_round, &state.dag);
+
+                let curr_ss_sets = ss_copy.entry(wave).or_insert(BTreeSet::new());
 
                 ss_stake = match first_ss_leader {
                     Some((_, l)) => state
@@ -485,7 +494,7 @@ impl Consensus {
                         .filter(|(d, x)| {
                             leader.header.parents.contains(d) && self.linked(x, l, dag)
                         })
-                        .filter(|(_, x)| ss_sets.contains(&x.origin()))
+                        .filter(|(_, x)| curr_ss_sets.contains(&x.origin()))
                         .map(|(_, x)| self.committee.stake(&x.origin()))
                         .sum(),
                     None => 0,
