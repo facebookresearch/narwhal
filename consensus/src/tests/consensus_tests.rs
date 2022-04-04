@@ -478,9 +478,14 @@ async fn fallback_two() {
         tx_waiter.send(certificate).await.unwrap();
     }
 
-    for i in 0..16 {
+    for _ in 0..3 {
         let certificate = rx_output.recv().await.unwrap();
-        assert_eq!(certificate.round(), (i / 4) + 8);
+        assert_eq!(certificate.round(), 8);
+    }
+
+    for i in 0..12 {
+        let certificate = rx_output.recv().await.unwrap();
+        assert_eq!(certificate.round(), (i / 4) + 9);
     }
 
     let certificate = rx_output.recv().await.unwrap();
@@ -563,9 +568,14 @@ async fn fallback_three() {
         tx_waiter.send(certificate).await.unwrap();
     }
 
-    for i in 0..16 {
+    for _ in 0..3 {
         let certificate = rx_output.recv().await.unwrap();
-        assert_eq!(certificate.round(), (i / 4) + 8);
+        assert_eq!(certificate.round(), 8);
+    }
+
+    for i in 0..12 {
+        let certificate = rx_output.recv().await.unwrap();
+        assert_eq!(certificate.round(), (i / 4) + 9);
     }
 
     let certificate = rx_output.recv().await.unwrap();

@@ -410,14 +410,12 @@ impl Consensus {
             let ss_stake: Stake;
             let fb_stake: Stake;
 
-            if r % 4 == 2 {
-                let second_ss_leader_round = 4 * wave + 2;
-                let second_ss_leader = self.leader(second_ss_leader_round, &state.dag);
+            if r % 4 == 0 {
+                let leader_round = 4 * wave;
+                let first_ss_leader = self.leader(leader_round, &state.dag);
+                let fb_leader = self.fb_leader(leader_round, &state.dag);
 
-                let fb_leader_round = 4 * wave;
-                let fb_leader = self.fb_leader(fb_leader_round, &state.dag);
-
-                ss_stake = match second_ss_leader {
+                ss_stake = match first_ss_leader {
                     Some((_, l)) => state
                         .dag
                         .get(&(r + 1))
@@ -432,26 +430,30 @@ impl Consensus {
                     None => 0,
                 };
 
-                fb_stake = match fb_leader {
-                    Some((_, l)) => state
-                        .dag
-                        .get(&(r + 1))
-                        .expect("Should have previous round certificates")
-                        .values()
-                        .filter(|(d, x)| {
-                            leader.header.parents.contains(d) && self.linked(x, l, dag)
-                        })
-                        .filter(|(_, x)| fb_sets.contains(&x.origin()))
-                        .map(|(_, x)| self.committee.stake(&x.origin()))
-                        .sum(),
-                    None => 0,
-                };
+                if leader.round() == r + 2 {
+                    fb_stake = 0;
+                } else {
+                    fb_stake = match fb_leader {
+                        Some((_, l)) => state
+                            .dag
+                            .get(&(r + 3))
+                            .expect("Should have previous round certificates")
+                            .values()
+                            .filter(|(d, x)| {
+                                leader.header.parents.contains(d) && self.linked(x, l, dag)
+                            })
+                            .filter(|(_, x)| fb_sets.contains(&x.origin()))
+                            .map(|(_, x)| self.committee.stake(&x.origin()))
+                            .sum(),
+                        None => 0,
+                    };
+                }
 
                 // If f+1 steady state votes and at most f fallback votes then steady state commit
                 if ss_stake >= self.committee.validity_threshold()
                     && fb_stake < self.committee.validity_threshold()
                 {
-                    match second_ss_leader {
+                    match first_ss_leader {
                         Some((_, l)) => {
                             to_commit.push(l.clone());
                             leader = l;
@@ -473,10 +475,10 @@ impl Consensus {
                     };
                 }
             } else {
-                let first_ss_leader_round = 4 * wave;
-                let first_ss_leader = self.leader(first_ss_leader_round, &state.dag);
+                let second_ss_leader_round = 4 * wave + 2;
+                let second_ss_leader = self.leader(second_ss_leader_round, &state.dag);
 
-                ss_stake = match first_ss_leader {
+                ss_stake = match second_ss_leader {
                     Some((_, l)) => state
                         .dag
                         .get(&(r + 1))
@@ -497,7 +499,7 @@ impl Consensus {
                 if ss_stake >= self.committee.validity_threshold()
                     && fb_stake < self.committee.validity_threshold()
                 {
-                    match first_ss_leader {
+                    match second_ss_leader {
                         Some((_, l)) => {
                             to_commit.push(l.clone());
                             leader = l;
