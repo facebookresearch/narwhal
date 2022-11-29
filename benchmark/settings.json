@@ -1,13 +1,13 @@
 {
     "key": {
         "name": "aws",
-        "path": "/home/brokeboi/.ssh/aws"
+        "path": "/Users/asonnino/.ssh/aws.pem"
     },
     "port": 5000,
     "repo": {
         "name": "narwhal",
-        "url": "https://github.com/PatStiles/narwhal",
-        "branch": "main"
+        "url": "https://github.com/asonnino/narwhal",
+        "branch": "master"
     },
     "instances": {
         "type": "m5d.8xlarge",
